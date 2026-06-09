@@ -11,7 +11,11 @@ renderer through a single shared bridge object (`window.__h3dCamCtl`) and never
 patches the renderer's internals, so it adds **no memory leaks** and can be
 updated or removed independently.
 
-![panel](./assets/screenshot.png)
+
+
+https://github.com/user-attachments/assets/ba1dbb92-be79-4a7b-9ecb-d4304089d3aa
+
+
 
 ## Features
 
