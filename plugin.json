@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "author": "Slopsmith community",
   "description": "Floating control panel to author, save and share the 3D Highway camera (orbit, pan, zoom, tilt, height). Bilingual EN/ES.",
-  "homepage": "https://github.com/your-user/slopsmith-plugin-camera-director",
+  "homepage": "https://github.com/nimuart/cameradirector_feedback",
   "license": "AGPL-3.0-only",
   "standards": ["plugin-runtime-idempotent.v1"],
   "script": "screen.js",

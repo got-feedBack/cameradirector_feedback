@@ -4,10 +4,10 @@
   "description": "Floating bilingual control panel to author, save and share the Slopsmith 3D Highway camera (orbit, pan, zoom, tilt, height).",
   "license": "AGPL-3.0-only",
   "keywords": ["slopsmith", "plugin", "camera", "three.js", "highway", "rocksmith"],
-  "homepage": "https://github.com/your-user/slopsmith-plugin-camera-director",
+  "homepage": "https://github.com/nimuart/cameradirector_feedback",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-user/slopsmith-plugin-camera-director.git"
+    "url": "https://github.com/nimuart/cameradirector_feedback.git"
   },
   "scripts": {
     "build": "node scripts/sync-assets.mjs"

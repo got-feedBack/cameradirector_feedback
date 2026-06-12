@@ -12,7 +12,7 @@ comunica con el renderer a través de un único objeto puente compartido
 (`window.__h3dCamCtl`) y nunca toca las tripas del renderer, así que **no genera
 fugas de memoria** y se puede actualizar o quitar de forma independiente.
 
-![panel](./assets/screenshot.png)
+https://github.com/user-attachments/assets/ba1dbb92-be79-4a7b-9ecb-d4304089d3aa
 
 ## Funciones
 
@@ -33,11 +33,13 @@ fugas de memoria** y se puede actualizar o quitar de forma independiente.
 
 ## Requisitos
 
-- Slopsmith con la visualización **3D Highway** (`highway_3d`) activa. El
-  `highway_3d` que viene de fábrica ya lee el puente `window.__h3dCamCtl` dentro
-  de su `camUpdate()`; este plugin lo maneja. (Si usás un `highway_3d` viejo sin
-  el puente, el panel igual abre pero no mueve la cámara — actualizá el plugin
-  del highway.)
+- Slopsmith con la visualización **3D Highway** (`highway_3d`) activa.
+- El **puente de cámara** aplicado a `highway_3d`. El `highway_3d` que viene de
+  fábrica con Slopsmith Desktop (hasta la **0.2.9** inclusive) **no** lee el
+  puente `window.__h3dCamCtl` todavía, así que sin él el panel abre pero la
+  cámara no se mueve. Este repo incluye el renderer parcheado y un instalador de
+  un clic en [`bridge/`](./bridge/) — mirá
+  [Instalar el puente](#instalar-el-puente-obligatorio) más abajo.
 
 ## Instalación (desde GitHub)
 
@@ -52,16 +54,51 @@ de plugins. Cloná este repo adentro:
 
 ```bash
 # Windows (PowerShell)
-git clone https://github.com/your-user/slopsmith-plugin-camera-director `
+git clone https://github.com/nimuart/cameradirector_feedback `
   "$env:APPDATA\slopsmith-desktop\plugins\camera_director"
 
 # macOS / Linux
-git clone https://github.com/your-user/slopsmith-plugin-camera-director \
+git clone https://github.com/nimuart/cameradirector_feedback \
   ~/.config/slopsmith-desktop/plugins/camera_director   # ajustá la ruta según la tabla
 ```
 
 Después **reiniciá Slopsmith**. El nombre de la carpeta no importa, pero el `id`
 del manifiesto (`camera_director`) sí — mantenelo único.
+
+> Clonar con git (en vez de bajar el ZIP) además permite que el Plugin Manager
+> integrado de Slopsmith actualice el plugin con un clic.
+
+## Instalar el puente (obligatorio)
+
+El plugin le habla al highway a través de `window.__h3dCamCtl`, pero el
+`highway_3d` que trae Slopsmith Desktop **0.2.9 y anteriores todavía no lo
+lee**. La carpeta [`bridge/`](./bridge/) incluye un `highway_3d/screen.js`
+parcheado (hecho sobre el bundle 0.2.9) más scripts de instalación y
+restauración:
+
+**Windows (instalación por defecto en `C:\Program Files\Slopsmith`):**
+
+1. Cerrá Slopsmith.
+2. Ejecutá `bridge/install_modded_screen.bat` (pide permisos de
+   administrador). Hace backup del renderer original como `screen.js.bak` y
+   copia el parcheado.
+3. Abrí Slopsmith — Camera Director ya mueve la cámara.
+
+Para deshacerlo, ejecutá `bridge/restore_original_screen.bat`, que
+restaura el backup.
+
+**Manual / macOS / Linux:** con Slopsmith cerrado, hacé backup y reemplazá
+`<recursos de la app>/slopsmith/plugins/highway_3d/screen.js` por
+`bridge/screen.js`.
+
+> ⚠️ **Las actualizaciones de la app pisan el puente.** Al actualizar Slopsmith
+> Desktop se reemplaza el `highway_3d` bundleado, así que volvé a correr el
+> instalador después de cada actualización. El archivo parcheado corresponde a
+> **Slopsmith Desktop 0.2.9** — en otras versiones, mejor esperar un parche que
+> corresponda antes que copiar este. La solución de fondo es que el soporte de
+> `__h3dCamCtl` se integre upstream en el `highway_3d` de Slopsmith — el cambio
+> exacto (~30 líneas) está documentado en [DEVELOPERS.md](./DEVELOPERS.md) (en
+> inglés, pensado para los mantenedores).
 
 ## Uso
 
@@ -104,12 +141,18 @@ camera_director/
 ├── assets/
 │   ├── plugin.css         # tema gótico-chic (se sirve como stylesheet del plugin)
 │   └── locales/           # diccionarios servidos en runtime (en.json, es.json)
+├── bridge/
+│   ├── screen.js                          # renderer highway_3d parcheado (lee el puente)
+│   ├── install_modded_screen.bat       # Windows: aplica el puente (hace backup)
+│   └── restore_original_screen.bat   # Windows: restaura el renderer original
 ├── src/
 │   └── locales/           # fuente canónica de los diccionarios (editá acá)
 ├── scripts/
 │   └── sync-assets.mjs    # copia src/locales -> assets/locales
 ├── package.json
 ├── README.md / README.es.md
+├── INSTALL.md / INSTALACION.md
+├── DEVELOPERS.md          # cómo hacer el puente nativo en highway_3d
 ```
 
 > **Para editar traducciones:** cambiá `src/locales/*.json` y después corré

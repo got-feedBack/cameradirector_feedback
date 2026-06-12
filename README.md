@@ -35,10 +35,12 @@ https://github.com/user-attachments/assets/ba1dbb92-be79-4a7b-9ecb-d4304089d3aa
 ## Requirements
 
 - Slopsmith with the bundled **3D Highway** (`highway_3d`) visualization active.
-  The bundled `highway_3d` already reads the `window.__h3dCamCtl` bridge inside
-  its `camUpdate()`; this plugin drives it. (If you run an older `highway_3d`
-  without the bridge, the panel still opens but won't move the camera — update
-  the highway plugin.)
+- The **camera bridge** applied to `highway_3d`. The stock `highway_3d` shipped
+  with Slopsmith Desktop (up to and including **0.2.9**) does **not** read the
+  `window.__h3dCamCtl` bridge yet, so without it the panel opens but the camera
+  won't move. This repo ships the patched renderer and a one-click installer in
+  [`bridge/`](./bridge/) — see [Installing the bridge](#installing-the-bridge-required)
+  below.
 
 ## Install (from GitHub)
 
@@ -53,16 +55,47 @@ directory. Clone this repo into it:
 
 ```bash
 # Windows (PowerShell)
-git clone https://github.com/your-user/slopsmith-plugin-camera-director `
+git clone https://github.com/nimuart/cameradirector_feedback `
   "$env:APPDATA\slopsmith-desktop\plugins\camera_director"
 
 # macOS / Linux
-git clone https://github.com/your-user/slopsmith-plugin-camera-director \
+git clone https://github.com/nimuart/cameradirector_feedback \
   ~/.config/slopsmith-desktop/plugins/camera_director   # adjust path per table
 ```
 
 Then **restart Slopsmith**. The folder name doesn't matter, but the manifest
 `id` (`camera_director`) does — keep it unique.
+
+> Cloning with git (instead of downloading a ZIP) also lets Slopsmith's
+> built-in Plugin Manager update the plugin with one click.
+
+## Installing the bridge (required)
+
+The plugin talks to the highway through `window.__h3dCamCtl`, but the stock
+`highway_3d` bundled with Slopsmith Desktop **0.2.9 and earlier doesn't read it
+yet**. The [`bridge/`](./bridge/) folder ships a patched `highway_3d/screen.js`
+(built from the 0.2.9 bundle) plus install/restore scripts:
+
+**Windows (default install in `C:\Program Files\Slopsmith`):**
+
+1. Close Slopsmith.
+2. Run `bridge/install_modded_screen.bat` (asks for admin rights). It backs
+   up the original renderer as `screen.js.bak` and copies the patched one in.
+3. Open Slopsmith — Camera Director now moves the camera.
+
+To undo it, run `bridge/restore_original_screen.bat`, which restores the
+backup.
+
+**Manual / macOS / Linux:** with Slopsmith closed, back up and replace
+`<app resources>/slopsmith/plugins/highway_3d/screen.js` with
+`bridge/screen.js`.
+
+> ⚠️ **App updates overwrite the bridge.** Updating Slopsmith Desktop replaces
+> the bundled `highway_3d`, so re-run the installer after every app update.
+> The patched file matches **Slopsmith Desktop 0.2.9** — on other versions,
+> prefer waiting for a matching patch over copying this one. The long-term fix
+> is upstreaming `__h3dCamCtl` support into Slopsmith's `highway_3d` — the
+> exact ~30-line change is documented in [DEVELOPERS.md](./DEVELOPERS.md).
 
 ## Usage
 
@@ -104,12 +137,18 @@ camera_director/
 ├── assets/
 │   ├── plugin.css         # Gothic-chic theme (served as the plugin stylesheet)
 │   └── locales/           # runtime-served dictionaries (en.json, es.json)
+├── bridge/
+│   ├── screen.js                          # patched highway_3d renderer (reads the bridge)
+│   ├── install_modded_screen.bat       # Windows: apply the bridge (backs up original)
+│   └── restore_original_screen.bat   # Windows: restore the original renderer
 ├── src/
 │   └── locales/           # canonical source for the dictionaries (edit here)
 ├── scripts/
 │   └── sync-assets.mjs    # copies src/locales -> assets/locales
 ├── package.json
 ├── README.md / README.es.md
+├── INSTALL.md / INSTALACION.md
+├── DEVELOPERS.md          # how to make the bridge native in highway_3d
 ```
 
 > **Editing translations:** change `src/locales/*.json`, then run `npm run build`
