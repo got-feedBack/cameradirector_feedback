@@ -22,11 +22,14 @@ git clone https://github.com/nimuart/cameradirector_feedback "$env:APPDATA\slops
 > `Feedback_Plugin` entero, copiá solo la subcarpeta `camera_director/` a la
 > carpeta de plugins.
 
-### Paso 2 — Aplicar el puente al highway (obligatorio)
+### Paso 2 — Aplicar el puente al highway (solo en 0.2.9 y anteriores)
 
-El `highway_3d` que trae Slopsmith Desktop (hasta la **0.2.9** inclusive) no lee
-el puente `window.__h3dCamCtl`: sin este paso el panel abre pero **la cámara no
-se mueve**.
+> **Usuarios de Slopsmith 0.3+: saltéense este paso.** Desde la 0.3 el puente
+> viene incluido en la app — con el Paso 1 alcanza.
+
+El `highway_3d` que trae Slopsmith Desktop **0.2.9 y anteriores** no lee el
+puente `window.__h3dCamCtl`: sin este paso el panel abre pero **la cámara no se
+mueve**.
 
 **Windows (instalación por defecto en `C:\Program Files\Slopsmith`):**
 

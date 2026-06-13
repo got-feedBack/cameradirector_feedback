@@ -1,7 +1,7 @@
 {
   "name": "slopsmith-plugin-camera-director",
-  "version": "1.0.0",
-  "description": "Floating bilingual control panel to author, save and share the Slopsmith 3D Highway camera (orbit, pan, zoom, tilt, height).",
+  "version": "2.0.0",
+  "description": "Floating bilingual control panel to author, save and share the Slopsmith 3D Highway camera (orbit, pan, zoom, tilt, height). Per-player profiles and a preset library.",
   "license": "AGPL-3.0-only",
   "keywords": ["slopsmith", "plugin", "camera", "three.js", "highway", "rocksmith"],
   "homepage": "https://github.com/nimuart/cameradirector_feedback",

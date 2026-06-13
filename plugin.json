@@ -1,9 +1,9 @@
 {
   "id": "camera_director",
   "name": "Camera Director",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Slopsmith community",
-  "description": "Floating control panel to author, save and share the 3D Highway camera (orbit, pan, zoom, tilt, height). Bilingual EN/ES.",
+  "description": "Floating control panel to author, save and share the 3D Highway camera (orbit, pan, zoom, tilt, height). Per-player profiles, preset library, bilingual EN/ES.",
   "homepage": "https://github.com/nimuart/cameradirector_feedback",
   "license": "AGPL-3.0-only",
   "standards": ["plugin-runtime-idempotent.v1"],
