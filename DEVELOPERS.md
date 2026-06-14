@@ -144,3 +144,51 @@ Until it's native, the patch must be rebuilt per app version:
 - [ ] Each field individually NaN/garbage → treated as its neutral value.
 - [ ] Orbit, height, zoom, tilt, pan all respond live while notes track.
 - [ ] No per-frame allocation added (check with the performance profiler).
+
+---
+
+## Splitscreen: per-panel cameras (Camera Director v3+)
+
+By default every splitscreen panel reads the **same** global `window.__h3dCamCtl`,
+so both players share one camera. Camera Director v3 keeps a **separate live
+camera per player** and publishes them as:
+
+```js
+// null when not split. Otherwise keyed by splitscreen panel index:
+window.__h3dCamCtlPanels = { 0: camPlayer1, 1: camPlayer2, /* ... */ };
+```
+
+Each `cam*` value has the exact same shape as `window.__h3dCamCtl`. The global
+`window.__h3dCamCtl` is still maintained (it points at the **focused** panel's
+camera), so an unpatched renderer keeps working — it just shows the focused
+player's framing on every panel.
+
+To make each panel obey its own player, the renderer's `camUpdate()` only needs
+to pick the per-panel object when present. Change the single read:
+
+```diff
+-            const _freeCam = window.__h3dCamCtl;
++            let _freeCam = window.__h3dCamCtl;
++            // Splitscreen: prefer this panel's own camera when the controller
++            // publishes a per-panel map. Falls back to the global otherwise.
++            try {
++                const _ss = window.slopsmithSplitscreen;
++                if (_ss && _ss.isActive && _ss.isActive()) {
++                    const _pi = _ss.panelIndexFor(highwayCanvas); // the canvas this renderer got in init()
++                    const _m = window.__h3dCamCtlPanels;
++                    if (_pi != null && _m && _m[_pi]) _freeCam = _m[_pi];
++                }
++            } catch (_) { /* fall back to global */ }
+```
+
+`highwayCanvas` is whatever canvas this renderer instance received in `init()`
+(the same one it already passes to `_ssIsCanvasFocused`). Everything downstream
+(`_freeCam.enabled`, `.distMul`, …) is unchanged. No new allocation; it's one
+map lookup per frame, only while split.
+
+### Testing checklist (splitscreen)
+
+- [ ] Not split → `__h3dCamCtlPanels` is null, behaviour identical to single read.
+- [ ] 2-up split → dragging panel 0 moves only Player 1; panel 1 only Player 2.
+- [ ] Player 1/2 tabs in the panel edit each player's sliders independently.
+- [ ] Leaving split collapses back to the single global camera with no errors.

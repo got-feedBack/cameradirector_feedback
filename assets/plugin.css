@@ -1,94 +1,168 @@
 /* ===========================================================================
- *  Camera Director — "Gothic Chic" theme
- *  Minimalist, high-contrast, ink-black glass with a single restrained gold
- *  accent. All selectors are namespaced under #camdir-root so nothing leaks
- *  into the host UI (the plugin ships preflight-off, utilities-free CSS).
+ *  Camera Director — Slopsmith theme
+ *  Brushed-metal device skin (background.png) with metal buttons
+ *  (button_on/off.png) and a metal slider knob (Slicer.png).
+ *
+ *  COLOUR RULE: the per-player accent (--cd-accent: blue = P1, orange = P2) is
+ *  used ONLY on the OUTER panel border / glow — the edge that divides the panel
+ *  from the game behind it. Everything INSIDE the menu is neutral metal / dark
+ *  grey / light text — no coloured accents inside.
+ *
+ *  All selectors are namespaced under #camdir-root. Image URLs are relative to
+ *  this file (served under assets/).
  * ========================================================================= */
 
 #camdir-root {
-  --cd-ink: #0b0c10;
-  --cd-glass: rgba(11, 12, 16, 0.92);
-  --cd-line: rgba(196, 178, 122, 0.28);
-  --cd-line-strong: rgba(196, 178, 122, 0.55);
-  --cd-gold: #c9b27a;
-  --cd-gold-dim: #8c7c4e;
-  --cd-text: #e7e3d6;
-  --cd-text-dim: #9a9486;
-  --cd-danger: #b5544e;
+  /* Per-player border colour, overridden in JS (P1 default). */
+  --cd-accent: #4080e0;
+  --cd-bg: #050508;
+  --cd-line: rgba(0, 0, 0, 0.5);     /* metal plate border */
+  --cd-text: #e7e9f0;
+  --cd-text-dim: #aab0c0;
+  --cd-danger: #d05a52;
   --cd-radius: 14px;
   font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 }
 
-/* Launcher chip ----------------------------------------------------------- */
+/* Launcher chip — sits over the game, so it carries the divider accent too --- */
 .camdir-chip {
   position: fixed;
   top: 72px;
   right: 18px;
   z-index: 99998;
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
-  color: var(--cd-gold);
-  background: var(--cd-glass);
-  border: 1px solid var(--cd-line-strong);
+  color: #eef1f7;
+  background: url("img/background.png") center / cover no-repeat;
+  border: 2px solid var(--cd-accent);
   border-radius: 11px;
-  cursor: pointer;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
-  transition: transform 0.15s ease, border-color 0.2s ease, color 0.2s ease;
+  cursor: grab;
+  touch-action: none; /* let the chip own pointer drags (no page scroll/zoom) */
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55), 0 0 14px -5px var(--cd-accent);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
 }
-.camdir-chip:hover { transform: translateY(-1px); color: #f0e6c4; border-color: var(--cd-gold); }
+.camdir-chip:hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6), 0 0 16px -3px var(--cd-accent); }
+.camdir-chip:active { cursor: grabbing; }
 
-/* Panel shell ------------------------------------------------------------- */
+/* Panel shell — full metal skin, accent ONLY on the outer border ----------- */
 .camdir-panel {
   position: fixed;
   top: 72px;
   right: 18px;
   z-index: 99999;
-  width: 248px;
-  padding: 16px 16px 14px;
+  width: 288px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding: 14px 15px 13px;
   color: var(--cd-text);
+  /* Cover (no stretch): fills the panel keeping the image's aspect ratio. */
   background:
-    linear-gradient(180deg, rgba(28, 26, 20, 0.55), rgba(11, 12, 16, 0.2)),
-    var(--cd-glass);
-  backdrop-filter: blur(10px) saturate(120%);
-  border: 1px solid var(--cd-line);
+    linear-gradient(180deg, rgba(4, 5, 8, 0.30), rgba(4, 5, 8, 0.38)),
+    url("img/background.png") center / cover no-repeat;
+  border: 2px solid var(--cd-accent);   /* the divider — the only coloured part */
   border-radius: var(--cd-radius);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.62),
+    0 0 18px -6px var(--cd-accent),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.5);
   font-size: 12.5px;
   user-select: none;
 }
 .camdir-panel[hidden] { display: none; }
-/* A hair-thin gold frame inset reads as engraved metal — the "chic" cue. */
+/* Neutral dark bezel groove inside the metal frame. */
 .camdir-panel::before {
   content: "";
   position: absolute;
-  inset: 5px;
-  border: 1px solid rgba(196, 178, 122, 0.12);
-  border-radius: 9px;
+  inset: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  border-radius: 10px;
   pointer-events: none;
 }
-.camdir-panel.camdir-armed { border-color: var(--cd-line-strong); }
+/* When free-cam is armed, intensify the OUTER accent glow only. */
+.camdir-panel.camdir-armed { box-shadow: 0 18px 50px rgba(0, 0, 0, 0.62), 0 0 26px -5px var(--cd-accent), inset 0 0 0 1px rgba(0, 0, 0, 0.5); }
+
+/* Player tabs (Player 1 / Player 2) — sit at the top like browser tabs ----- */
+.camdir-tabs { display: flex; gap: 5px; margin: -2px -2px 11px; }
+.camdir-tab {
+  --tab: var(--cd-accent);
+  flex: 1 1 0; padding: 8px 6px; min-height: 34px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em;
+  color: #f1f3fa;
+  /* Inverted: UNselected tabs are the bright raised metal. */
+  background: url("img/button_on.png") center / 100% 100% no-repeat;
+  border: 1px solid rgba(0, 0, 0, 0.5); border-bottom: none;
+  border-radius: 10px 10px 0 0; cursor: pointer;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  transition: color 0.18s ease, filter 0.18s ease, transform 0.14s ease, box-shadow 0.18s ease;
+}
+.camdir-tab:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.camdir-tab.is-active {
+  /* The SELECTED tab is the darker, pressed-in metal. */
+  background: url("img/button_off.png") center / 100% 100% no-repeat;
+  color: #fff;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.5), 0 -2px 12px -4px var(--tab);
+}
+/* A thin coloured underline on the active tab to tie it to the player accent. */
+.camdir-tab.is-active::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px;
+  background: var(--tab); border-radius: 2px;
+}
+.camdir-tab { position: relative; }
+
+/* ── Modern motion: pop-in on open + staggered content rise ──────────────── */
+@keyframes cdPop { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes cdRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.camdir-pop { animation: cdPop 0.26s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.camdir-pop .camdir-tabs { animation: cdRise 0.30s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.camdir-pop .camdir-head { animation: cdRise 0.30s 0.03s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.camdir-pop .camdir-master { animation: cdRise 0.30s 0.06s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.camdir-pop .camdir-grid { animation: cdRise 0.30s 0.09s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.camdir-pop .camdir-section-title { animation: cdRise 0.30s 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.camdir-pop .camdir-presets-top { animation: cdRise 0.30s 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* Gentle "alive" breathing glow on the launcher chip. */
+@keyframes cdBreath {
+  0%, 100% { box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55), 0 0 9px -4px var(--cd-accent); }
+  50% { box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55), 0 0 20px -2px var(--cd-accent); }
+}
+.camdir-chip { animation: cdBreath 3.4s ease-in-out infinite; }
+
+/* Hover/press micro-interactions for a modern feel. */
+.camdir-preset { transition: transform 0.14s ease, box-shadow 0.14s ease; }
+.camdir-preset:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(0, 0, 0, 0.42); }
+.camdir-icon-btn { transition: color 0.15s ease, background 0.15s ease, transform 0.13s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.camdir-icon-btn:hover { transform: scale(1.16); }
+.camdir-icon-btn:active { transform: scale(0.9); }
+.camdir-act-play:hover { color: #fff; }
+.camdir-tab:active { transform: scale(0.98); }
+.camdir-master { transition: box-shadow 0.2s ease, filter 0.2s ease, transform 0.12s ease; }
+.camdir-master:active { transform: scale(0.99); }
+
+@media (prefers-reduced-motion: reduce) {
+  .camdir-pop, .camdir-pop *, .camdir-chip { animation: none !important; }
+}
 
 /* Header ------------------------------------------------------------------ */
-.camdir-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.camdir-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
 .camdir-title {
   display: flex; align-items: center; gap: 8px;
-  font-family: "Cinzel", "Trajan Pro", Georgia, serif;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   font-size: 13px;
-  color: #f3ecd6;
+  font-weight: 600;
+  color: #f1f3fa;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
-.camdir-title svg { color: var(--cd-gold); }
+.camdir-title svg { color: #cfd4e2; }
 .camdir-tools { display: flex; align-items: center; gap: 6px; }
 
 .camdir-lang {
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
-  color: var(--cd-gold); background: transparent;
-  border: 1px solid var(--cd-line); border-radius: 7px;
+  color: var(--cd-text); background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 7px;
   padding: 3px 7px; cursor: pointer;
 }
-.camdir-lang:hover { border-color: var(--cd-gold); }
+.camdir-lang:hover { background: rgba(0, 0, 0, 0.5); color: #fff; }
 
 .camdir-icon-btn {
   display: grid; place-items: center;
@@ -97,81 +171,202 @@
   border: 1px solid transparent; border-radius: 7px; cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease;
 }
-.camdir-icon-btn:hover { color: var(--cd-text); background: rgba(255, 255, 255, 0.05); }
+.camdir-icon-btn:hover { color: #fff; background: rgba(0, 0, 0, 0.4); }
 .camdir-icon-btn.camdir-danger:hover { color: var(--cd-danger); }
 
-/* Master switch ----------------------------------------------------------- */
+/* Player toggle — neutral metal pills (identity shown by the panel border) -- */
+.camdir-players { display: flex; gap: 8px; margin-bottom: 11px; }
+.camdir-pill {
+  flex: 1 1 0;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 6px; min-height: 38px;
+  color: var(--cd-text-dim);
+  background: url("img/button_off.png") center / 100% 100% no-repeat;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  border-radius: 9px; cursor: pointer;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  transition: color 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.camdir-pill:hover { filter: brightness(1.12); color: var(--cd-text); }
+.camdir-pill.is-active {
+  background: url("img/button_on.png") center / 100% 100% no-repeat;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.camdir-pill-label { font-size: 11px; letter-spacing: 0.04em; font-weight: 600; }
+.camdir-pill-num {
+  width: 30px; padding: 2px 0;
+  text-align: center; font-size: 15px; font-weight: 800;
+  color: #fff; background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  border-radius: 6px; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.camdir-pill-num:focus { border-color: rgba(255, 255, 255, 0.4); box-shadow: 0 0 6px -2px rgba(0, 0, 0, 0.8); }
+.camdir-pill:not(.is-active) .camdir-pill-num { color: var(--cd-text); }
+
+/* Master switch (metal on/off button) — neutral, no colour -----------------*/
 .camdir-master {
   display: flex; align-items: center; gap: 9px;
-  padding: 8px 10px; margin-bottom: 12px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--cd-line); border-radius: 9px;
-  cursor: pointer;
+  padding: 9px 11px; margin-bottom: 12px; min-height: 40px;
+  background: url("img/button_off.png") center / 100% 100% no-repeat;
+  border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 9px;
+  cursor: pointer; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  transition: box-shadow 0.2s ease, filter 0.2s ease;
 }
-.camdir-master input { accent-color: var(--cd-gold); width: 15px; height: 15px; }
+.camdir-master:hover { filter: brightness(1.08); }
+.camdir-master.is-on {
+  background: url("img/button_on.png") center / 100% 100% no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.camdir-master input { accent-color: #4a4d57; width: 15px; height: 15px; }
+.camdir-master-txt { color: var(--cd-text); font-weight: 600; }
 .camdir-master-state {
-  margin-left: auto; font-weight: 700; letter-spacing: 0.1em; font-size: 10.5px;
-  color: var(--cd-gold-dim);
+  margin-left: auto; font-weight: 800; letter-spacing: 0.1em; font-size: 10.5px;
 }
-.camdir-armed .camdir-master-state { color: var(--cd-gold); }
+/* "Free camera" label: GREY when OFF, GREEN when ON (driven by .camdir-armed,
+   which the screen.js sets whenever the free camera is enabled). */
+.camdir-master span { color: #9aa0b4; transition: color 0.18s ease; }
+.camdir-panel.camdir-armed .camdir-master span { color: #4fd584; }
+.camdir-panel.camdir-armed .camdir-master input { accent-color: #4fd584; }
 
-/* Slider rows ------------------------------------------------------------- */
+/* Slider rows — neutral dark track + metal knob --------------------------- */
 .camdir-grid { display: flex; flex-direction: column; gap: 9px; }
 .camdir-row { display: flex; flex-direction: column; gap: 4px; }
 .camdir-label { display: flex; align-items: center; gap: 6px; color: var(--cd-text-dim); }
-.camdir-label > span:first-of-type { color: var(--cd-text); }
-.camdir-label svg { color: var(--cd-gold-dim); }
-.camdir-val { margin-left: auto; color: var(--cd-gold); font-variant-numeric: tabular-nums; }
+.camdir-label > span:first-of-type { color: var(--cd-text); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65); }
+.camdir-label svg { color: #aab0c0; }
+/* Value reads as a label (as before); click it to open the edit popover. */
+.camdir-val {
+  margin-left: auto; color: #fff; font-variant-numeric: tabular-nums; font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  padding: 1px 6px; border-radius: 6px; cursor: pointer;
+  border: 1px solid transparent;
+}
+.camdir-val:hover { background: rgba(0, 0, 0, 0.35); border-color: rgba(255, 255, 255, 0.14); }
+
+/* Number edit popover (opened when a value is tapped) --------------------- */
+.camdir-valedit {
+  position: fixed; z-index: 100000;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px; min-width: 132px;
+  background: url("img/button_off.png") center / 100% 100% no-repeat, #15171d;
+  border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 9px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+}
+.camdir-valedit[hidden] { display: none; }
+.camdir-valedit input {
+  flex: 1 1 auto; width: 64px;
+  color: #fff; background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 6px;
+  padding: 4px 6px; font-size: 13px; font-weight: 700; text-align: right;
+  font-variant-numeric: tabular-nums; outline: none;
+}
+.camdir-valedit input:focus { border-color: rgba(255, 255, 255, 0.4); }
+.camdir-valedit-unit { color: var(--cd-text-dim); font-size: 11px; }
+/* Wider variant used to type a new preset name. */
+.camdir-nameedit { min-width: 210px; }
+.camdir-nameedit input { width: 100%; text-align: left; font-weight: 600; }
+.camdir-nameedit input::placeholder { color: var(--cd-text-dim); font-weight: 400; }
+.camdir-valedit-ok {
+  flex: 0 0 auto; display: grid; place-items: center;
+  width: 26px; height: 26px; color: #fff; cursor: pointer;
+  background: url("img/button_on.png") center / 100% 100% no-repeat;
+  border: 1px solid rgba(0, 0, 0, 0.6); border-radius: 6px;
+}
 
 .camdir-slider {
   -webkit-appearance: none; appearance: none;
-  width: 100%; height: 3px;
-  background: linear-gradient(90deg, var(--cd-gold-dim), rgba(255, 255, 255, 0.08));
+  width: 100%; height: 4px;
+  background: linear-gradient(90deg, #5a5f6b, #20232b);
+  border: 1px solid rgba(0, 0, 0, 0.5);
   border-radius: 3px; outline: none; cursor: pointer;
 }
 .camdir-slider::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
-  width: 13px; height: 13px; border-radius: 50%;
-  background: var(--cd-gold); border: 1px solid #1a1a1a;
-  box-shadow: 0 0 0 3px rgba(201, 178, 122, 0.18);
+  width: 18px; height: 18px;
+  background: url("img/Slicer.png") center / contain no-repeat;
+  border: none; border-radius: 4px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
 }
 .camdir-slider::-moz-range-thumb {
-  width: 13px; height: 13px; border-radius: 50%;
-  background: var(--cd-gold); border: 1px solid #1a1a1a;
+  width: 18px; height: 18px; border: none; border-radius: 4px;
+  background: url("img/Slicer.png") center / contain no-repeat;
 }
 
-/* Buttons / actions ------------------------------------------------------- */
-.camdir-actions { display: flex; gap: 7px; margin: 13px 0 0; flex-wrap: wrap; }
+/* Buttons / actions — metal, neutral (no coloured rings) ------------------ */
+.camdir-actions { display: flex; gap: 7px; margin: 10px 0 0; flex-wrap: wrap; }
 .camdir-btn {
   display: inline-flex; align-items: center; gap: 6px;
   flex: 1 1 auto; justify-content: center;
-  padding: 7px 9px; font-size: 11.5px;
-  color: var(--cd-text); background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--cd-line); border-radius: 8px; cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  padding: 8px 9px; min-height: 34px; font-size: 11.5px; font-weight: 600;
+  color: #fff;
+  /* Bright raised metal at rest (inverted) — reads as a real button. */
+  background: url("img/button_on.png") center / 100% 100% no-repeat;
+  border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 8px; cursor: pointer;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+  transition: box-shadow 0.16s ease, filter 0.16s ease, transform 0.12s ease;
 }
-.camdir-btn:hover { border-color: var(--cd-gold); color: #f3ecd6; }
-.camdir-btn svg { color: var(--cd-gold-dim); }
+.camdir-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25), 0 3px 12px rgba(0, 0, 0, 0.5);
+}
+.camdir-btn:active { transform: translateY(1px) scale(0.985); filter: brightness(0.94); }
+.camdir-btn svg { color: #eef1f7; opacity: 0.92; }
+/* Primary action (Create preset): same bright metal + accent ring to stand out. */
 .camdir-btn--primary {
-  color: var(--cd-ink); background: var(--cd-gold); border-color: var(--cd-gold);
-  font-weight: 700;
+  border-color: rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28), 0 0 14px -6px var(--cd-accent);
 }
-.camdir-btn--primary svg { color: var(--cd-ink); }
-.camdir-btn--primary:hover { background: #d8c084; }
+.camdir-btn--primary:hover { filter: brightness(1.14); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32), 0 0 18px -5px var(--cd-accent); }
 
-/* Presets ----------------------------------------------------------------- */
+/* Presets — metal plates, consistent with the buttons --------------------- */
 .camdir-section-title {
-  margin: 16px 0 8px; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--cd-gold-dim); border-bottom: 1px solid var(--cd-line); padding-bottom: 5px;
+  margin: 15px 0 8px; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--cd-text-dim); border-bottom: 1px solid rgba(0, 0, 0, 0.5); padding-bottom: 5px;
 }
-.camdir-presets { display: flex; flex-direction: column; gap: 5px; max-height: 168px; overflow-y: auto; }
+.camdir-presets { display: flex; flex-direction: column; gap: 6px; max-height: 168px; overflow-y: auto; padding: 2px; }
+/* Create preset — big, centered button above the list. */
+.camdir-presets-top { display: flex; justify-content: center; margin: 6px 0 6px; }
+.camdir-create {
+  flex: 0 1 auto; min-width: 138px; min-height: 32px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase;
+}
+/* Import — small text link centered under Create. */
+.camdir-presets-import { display: flex; justify-content: center; margin-bottom: 9px; }
+.camdir-import-link {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: none; cursor: pointer;
+  color: var(--cd-text-dim); font: inherit; font-size: 10.5px; letter-spacing: 0.06em;
+}
+.camdir-import-link:hover { color: #fff; text-decoration: underline; }
+.camdir-import-link svg { color: #aab0c0; }
+
+/* Preset row: name + subtle action icons (play · download · delete).
+   Slimmer than the buttons; icons hug the right of the name. */
 .camdir-preset {
   display: flex; align-items: center; gap: 6px;
-  padding: 5px 8px; background: rgba(0, 0, 0, 0.28);
-  border: 1px solid var(--cd-line); border-radius: 8px;
+  padding: 3px 6px 3px 10px; min-height: 30px;
+  background: url("img/button_off.png") center / 100% 100% no-repeat;
+  border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 8px;
 }
-.camdir-preset-name { flex: 1 1 auto; color: var(--cd-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.camdir-preset .camdir-btn { flex: 0 0 auto; padding: 4px 8px; }
+.camdir-preset-name { flex: 1 1 auto; min-width: 0; padding: 3px 9px; border-radius: 6px; color: #fff; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); transition: filter 0.15s ease; }
+.camdir-preset-name.is-builtin { color: #fff; font-weight: 700; }
+.camdir-preset-acts { display: flex; align-items: center; gap: 0; flex: 0 0 auto; }
+.camdir-preset-acts .camdir-icon-btn { flex: 0 0 auto; width: 24px; height: 24px; color: #cfd4e2; }
+.camdir-preset-acts .camdir-icon-btn:hover { color: #fff; background: rgba(0, 0, 0, 0.42); }
+.camdir-preset-acts .camdir-icon-btn svg { width: 14px; height: 14px; }
+.camdir-act-play svg { transform: translateX(1px); }   /* optical centering */
 .camdir-empty { color: var(--cd-text-dim); font-style: italic; padding: 6px 2px; }
 
-.camdir-hint { margin-top: 12px; font-size: 10px; line-height: 1.5; color: var(--cd-text-dim); }
+.camdir-hint { margin-top: 11px; font-size: 10px; line-height: 1.5; color: var(--cd-text-dim); }
+
+/* Reset — plain text link at the very bottom (no button chrome). ----------- */
+.camdir-reset-link {
+  display: block; width: 100%; margin-top: 10px; padding: 5px;
+  background: none; border: none; cursor: pointer;
+  color: var(--cd-text-dim); font: inherit; font-size: 11px;
+  letter-spacing: 0.12em; text-transform: uppercase; text-align: center;
+}
+.camdir-reset-link:hover { color: #fff; text-decoration: underline; }

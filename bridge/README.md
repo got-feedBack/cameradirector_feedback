@@ -2,11 +2,15 @@
 
 > 🇬🇧 English · [🇪🇸 Español](./README.es.md)
 
+> **Only needed on Slopsmith 0.2.9 and earlier.** From Slopsmith **0.3** the
+> bridge ships inside the app, so you can ignore this folder entirely — just
+> install the plugin.
+
 Camera Director drives the 3D Highway camera through a single shared object,
 `window.__h3dCamCtl`, which the highway renderer reads every frame inside its
-`camUpdate()`. The `highway_3d` plugin bundled with Slopsmith Desktop (up to
-and including **0.2.9**) does **not** include that read yet — this folder ships
-the patched renderer plus install/restore scripts.
+`camUpdate()`. The `highway_3d` plugin bundled with Slopsmith Desktop **0.2.9
+and earlier** does **not** include that read yet — this folder ships the
+patched renderer plus install/restore scripts.
 
 ## Contents
 
