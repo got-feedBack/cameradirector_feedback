@@ -2,6 +2,10 @@
 
 > 🇪🇸 Español · [🇬🇧 English](./README.md)
 
+
+https://github.com/user-attachments/assets/11dd4b15-f3b8-43aa-9ed8-d5b3c8d39d22
+
+
 Panel flotante para controlar la cámara del **3D Highway** en tiempo real:
 órbita, paneo, zoom, inclinación, altura — con **cámaras por jugador en
 split-screen**, **biblioteca de presets** e interfaz bilingüe EN/ES.
