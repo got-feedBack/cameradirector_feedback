@@ -49,7 +49,7 @@
 
   const PLUGIN_ID = 'camera_director';
   const ASSET_BASE = `/api/plugins/${PLUGIN_ID}/assets`;
-  const VERSION = '3.0.0';
+  const VERSION = '3.1.3';
 
   const LS_PROFILES = 'camera_director.profiles.v2';
   const LS_LIVE = 'camera_director.live';        // legacy v1 (migrated → slot A)

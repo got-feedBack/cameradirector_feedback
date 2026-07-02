@@ -5,10 +5,11 @@
  *  to it ONLY through `window.__camDir`. You can iterate this file (and
  *  plugin.css) freely without touching the brain.
  *
- *  Responsibilities: launcher chip (draggable), panel DOM, player tabs (only in
- *  splitscreen), sliders + editable values, master toggle, preset library,
- *  reset, i18n, hotkey, open/close animation. No camera math, no persistence of
- *  camera state — that's the brain.
+ *  Responsibilities: launcher button (mounted into the player's Visualisation &
+ *  Quality toolbar, next to the viz picker, shown only for 3D highways), panel
+ *  DOM, player tabs (only in splitscreen), sliders + editable values, master
+ *  toggle, preset library, reset, i18n, hotkey, open/close animation. No camera
+ *  math, no persistence of camera state — that's the brain.
  * ==========================================================================*/
 (function () {
   'use strict';
@@ -24,13 +25,12 @@
   const PLUGIN_ID = 'camera_director';
   const ASSET_BASE = `/api/plugins/${PLUGIN_ID}/assets`;
   const LS_LANG = 'camera_director.lang';
-  const LS_CHIP = 'camera_director.chippos';
   const AXES = API.AXES;
 
   // ── i18n ────────────────────────────────────────────────────────────────────
   const FALLBACK_I18N = {
     en: {
-      title: 'Camera Director', master: 'Free camera', on: 'ON', off: 'OFF',
+      title: 'Camera Director', launch: 'Camera', open: 'Open', master: 'Free camera', on: 'ON', off: 'OFF',
       heightMul: 'Height', distMul: 'Zoom', yaw: 'Orbit', pitch: 'Tilt',
       panX: 'Pan X', panY: 'Pan Y', reset: 'Reset', close: 'Close',
       presets: 'Presets', create: 'Create preset', save: 'Save preset', load: 'Load',
@@ -41,7 +41,7 @@
       language: 'Language', player: 'Player',
     },
     es: {
-      title: 'Director de Cámara', master: 'Cámara libre', on: 'SÍ', off: 'NO',
+      title: 'Director de Cámara', launch: 'Cámara', open: 'Abrir', master: 'Cámara libre', on: 'SÍ', off: 'NO',
       heightMul: 'Altura', distMul: 'Zoom', yaw: 'Órbita', pitch: 'Inclinación',
       panX: 'Pan X', panY: 'Pan Y', reset: 'Restablecer', close: 'Cerrar',
       presets: 'Presets', create: 'Crear preset', save: 'Guardar preset', load: 'Cargar',
@@ -97,10 +97,25 @@
   }
 
   const root = el('div'); root.id = 'camdir-root';
-  const chip = el('button', 'camdir-chip'); chip.id = 'camdir-chip';
-  chip.innerHTML = svg('camera', 18); chip.title = t('title');
   const panel = el('div', 'camdir-panel'); panel.id = 'camdir-panel'; panel.hidden = true;
-  root.appendChild(chip); root.appendChild(panel);
+  root.appendChild(panel);
+
+  // Launcher lives as its OWN ROW inside the Visualisation & Quality popover
+  // (#v3-rail-pop-viz) — not a floating chip and not crammed next to the viz
+  // dropdown. It mirrors the native `.v3-pop-row` pattern (a `.v3-pop-label` on
+  // the left + a `.v3-pop-btn` control on the right) used by the Visualization /
+  // Quality / Min res / Scoreboard rows, so it looks built-in.
+  const launchRow = el('div', 'v3-pop-row');
+  launchRow.id = 'camdir-launch-row';
+  const launchLabel = el('span', 'v3-pop-label');
+  launchLabel.textContent = t('launch');
+  const launchBtn = el('button', 'v3-pop-btn');
+  launchBtn.id = 'camdir-launch';
+  launchBtn.type = 'button';
+  launchBtn.style.cssText = 'display:inline-flex;align-items:center;gap:6px;';
+  launchBtn.innerHTML = svg('camera', 14) + `<span>${t('open')}</span>`;
+  launchBtn.title = t('title');
+  launchRow.append(launchLabel, launchBtn);
 
   const importPicker = el('input');
   importPicker.type = 'file'; importPicker.accept = 'application/json,.json'; importPicker.style.display = 'none';
@@ -326,8 +341,13 @@
   // ── Visibility + hotkey ─────────────────────────────────────────────────────
   function togglePanel() {
     panel.hidden = !panel.hidden;
-    chip.hidden = !panel.hidden;
-    if (!panel.hidden) {
+    const open = !panel.hidden;
+    // Highlight the launcher + flip Open/Close while the panel is showing.
+    launchBtn.style.boxShadow = open ? 'inset 0 0 0 1px #4fd584' : '';
+    launchBtn.style.color = open ? '#fff' : '';
+    const lbl = launchBtn.querySelector('span');
+    if (lbl) lbl.textContent = open ? t('close') : t('open');
+    if (open) {
       panel.classList.remove('camdir-pop'); void panel.offsetWidth; panel.classList.add('camdir-pop');
       syncSliders();
     }
@@ -339,33 +359,61 @@
     togglePanel(); e.preventDefault();
   });
 
-  // ── Draggable launcher chip (tap = open; drag = move; position persists) ────
-  function saveChipPos() { try { localStorage.setItem(LS_CHIP, JSON.stringify({ left: chip.style.left, top: chip.style.top })); } catch (e) { /* ignore */ } }
-  function restoreChipPos() {
-    try { const p = JSON.parse(localStorage.getItem(LS_CHIP) || 'null'); if (p && p.left && p.top) { chip.style.left = p.left; chip.style.top = p.top; chip.style.right = 'auto'; } } catch (e) { /* ignore */ }
+  // ── Launcher button in the Visualisation & Quality toolbar ──────────────────
+  // The camera only responds on the 3D highways (guitar/drum/keys), so the
+  // button is shown only when one of those is the active visualization.
+  const VIZ_3D = { highway_3d: 1, drum_highway_3d: 1, keys_highway_3d: 1, venue: 1 };
+  function is3DHighway() {
+    const sel = document.getElementById('viz-picker');
+    const v = sel ? sel.value : '';
+    // 'auto' resolves to an arrangement-matched viz (almost always a 3D highway
+    // here); show the launcher for it too — it's harmless if it resolved to 2D.
+    return v === 'auto' || !!VIZ_3D[v];
   }
-  let chipDrag = null;
-  on(chip, 'pointerdown', (e) => {
-    const r = chip.getBoundingClientRect();
-    chipDrag = { x0: e.clientX, y0: e.clientY, left: r.left, top: r.top, moved: false };
-    try { chip.setPointerCapture(e.pointerId); } catch (e2) { /* ignore */ }
-    e.preventDefault();
-  });
-  on(chip, 'pointermove', (e) => {
-    if (!chipDrag) return;
-    const dx = e.clientX - chipDrag.x0, dy = e.clientY - chipDrag.y0;
-    if (!chipDrag.moved && Math.hypot(dx, dy) > 4) chipDrag.moved = true;
-    if (!chipDrag.moved) return;
-    const nx = Math.max(2, Math.min(window.innerWidth - chip.offsetWidth - 2, chipDrag.left + dx));
-    const ny = Math.max(2, Math.min(window.innerHeight - chip.offsetHeight - 2, chipDrag.top + dy));
-    chip.style.left = nx + 'px'; chip.style.top = ny + 'px'; chip.style.right = 'auto';
-  });
-  on(chip, 'pointerup', (e) => {
-    if (!chipDrag) return;
-    const moved = chipDrag.moved; chipDrag = null;
-    try { chip.releasePointerCapture(e.pointerId); } catch (e2) { /* ignore */ }
-    if (moved) saveChipPos(); else togglePanel();
-  });
+  function refreshLaunchVisibility() {
+    const show = is3DHighway();
+    launchRow.style.display = show ? 'flex' : 'none';
+    if (!show && !panel.hidden) togglePanel(); // close if the highway went 2D
+  }
+  let _mountTries = 0;
+  function mountLauncher() {
+    if (launchRow.isConnected) { refreshLaunchVisibility(); return; }
+    const pop = document.getElementById('v3-rail-pop-viz');
+    const picker = document.getElementById('viz-picker');
+    if (pop) {
+      // Add our row to the Visualisation & Quality popover, right after the
+      // Visualization row so it sits with the viz/quality controls.
+      const vizRow = picker && picker.closest('.v3-pop-row');
+      if (vizRow && vizRow.parentElement === pop) vizRow.insertAdjacentElement('afterend', launchRow);
+      else pop.appendChild(launchRow);
+      refreshLaunchVisibility();
+      return;
+    }
+    // Fallback for non-v3 layouts: drop the row next to the viz picker.
+    if (picker && picker.parentElement) {
+      picker.insertAdjacentElement('afterend', launchRow);
+      refreshLaunchVisibility();
+      return;
+    }
+    // Popover not in the DOM yet — retry briefly (player chrome mounts lazily).
+    if (_mountTries++ < 40) setTimeout(mountLauncher, 150);
+  }
+  // Close the floating panel when the user leaves the highway. highway:visibility
+  // tracks the canvas's DOM visibility (offsetParent), so `visible:false` means
+  // the highway view was actually navigated away from — not a mere tab switch —
+  // and the panel shouldn't linger floating over the library / other screens.
+  function onHighwayVisibility(ev) {
+    if (ev && ev.visible === false && !panel.hidden) togglePanel();
+  }
+  on(launchBtn, 'click', togglePanel);
+  const _vizSel = document.getElementById('viz-picker');
+  if (_vizSel) on(_vizSel, 'change', refreshLaunchVisibility);
+  if (window.feedBack && typeof window.feedBack.on === 'function') {
+    try {
+      window.feedBack.on('viz:renderer:ready', refreshLaunchVisibility);
+      window.feedBack.on('highway:visibility', onHighwayVisibility);
+    } catch (e) { /* ignore */ }
+  }
 
   // ── Brain subscriptions ─────────────────────────────────────────────────────
   const onChange = (k) => { if (k === API.getEditingKey()) syncSliders(); };
@@ -378,17 +426,29 @@
   // ── Mount ───────────────────────────────────────────────────────────────────
   document.body.appendChild(root);
   document.body.appendChild(importPicker);
-  restoreChipPos();
+  mountLauncher();
   buildPanel();
-  loadLocales().then(() => buildPanel());
+  loadLocales().then(() => {
+    buildPanel();
+    launchLabel.textContent = t('launch');
+    launchBtn.querySelector('span').textContent = panel.hidden ? t('open') : t('close');
+    launchBtn.title = t('title');
+  });
 
   // ── Teardown handle (called by the brain on re-injection) ───────────────────
   window.__camDirUI = {
     destroy() {
       API.off('change', onChange); API.off('mode', onMode); API.off('presets', onPresets);
+      if (window.feedBack && typeof window.feedBack.off === 'function') {
+        try {
+          window.feedBack.off('viz:renderer:ready', refreshLaunchVisibility);
+          window.feedBack.off('highway:visibility', onHighwayVisibility);
+        } catch (e) { /* ignore */ }
+      }
       closePop();
       for (const [e2, ev, fn, opts] of L) { try { e2.removeEventListener(ev, fn, opts); } catch (e) { /* ignore */ } }
       L.length = 0;
+      launchRow.remove();
       root.remove(); importPicker.remove();
     },
   };
