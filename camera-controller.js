@@ -100,6 +100,13 @@
     return clampAxis(key, n);
   }
 
+  // Node-only export hook for tests; browsers fall through to the rest of
+  // the brain (profiles/localStorage, DOM listeners, UI script loading).
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { AXES, DEFAULTS, clampAxis, stripLive, fmtAxis, parseAxis };
+    return;
+  }
+
   // ── Profiles (per-slot live camera + presets), persisted ────────────────────
   function loadProfiles() {
     let s = null;
