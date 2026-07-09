@@ -3,21 +3,29 @@
  *  (Slopsmith fetches it at the /screen.js URL, but plugin.json "script" points
  *   here — so the file name no longer clashes with highway_3d/screen.js.)
  *  ----------------------------------------------------------------------------
- *  This file is the stable "brain": it owns the camera bridge, per-player
- *  state, splitscreen routing, presets and persistence, and exposes a clean
- *  API on `window.__camDir`. It contains NO panel UI — the visual layer lives
- *  in `assets/ui-panel.js`, which this file loads at the end. That separation
- *  lets the UI be iterated/updated without touching this brain.
+ *  This file is the stable "brain": it owns the camera bridge, per-PANEL state,
+ *  splitscreen routing, presets and persistence, and exposes a clean API on
+ *  `window.__camDir`. It contains NO panel UI — the visual layer lives in
+ *  `assets/ui-panel.js`, which this file loads at the end. That separation lets
+ *  the UI be iterated/updated without touching this brain.
+ *
+ *  PANELS ARE KEYED BY NAME (not fixed A–D slots)
+ *  ----------------------------------------------
+ *  Splitscreen panels are user-nameable and a popped-out panel can itself split
+ *  into more panels, so the old 4-slot model doesn't scale. Cameras, assignments
+ *  and the edit target are now keyed by the panel's NAME (from the splitscreen
+ *  API's `getPanels()`), while the highways still read a per-INDEX map — so
+ *  `writeBridge()` maps each active panel index → its name → its live camera.
  *
  *  BRIDGE CONTRACT (consumed by the highway_3d renderer in its camUpdate())
  *  -----------------------------------------------------------------------
  *    window.__h3dCamCtl = { enabled, heightMul, distMul, yaw, pitch, panX, panY }
- *        The single, global camera. The current renderer reads ONLY this, so
- *        it is always kept pointing at the focused (or single) player's camera.
+ *        The single, global camera. Renderers that don't read the per-panel map
+ *        read ONLY this, so it is kept pointing at the focused player's camera.
  *
  *    window.__h3dCamCtlPanels = { 0: camA, 1: camB, ... } | null
- *        Per-splitscreen-panel cameras. NULL when not split. A splitscreen-aware
- *        renderer prefers this, falling back to the global:
+ *        Per-splitscreen-panel cameras BY INDEX. NULL when not split. A
+ *        splitscreen-aware renderer prefers this, falling back to the global:
  *
  *            let fc = window.__h3dCamCtl;
  *            const ss = window.feedBackSplitscreen || window.slopsmithSplitscreen;
@@ -27,27 +35,22 @@
  *              if (i != null && m && m[i]) fc = m[i];
  *            }
  *
- *        The bundled highways (highway_3d / drum_highway_3d / keys_highway_3d)
- *        now consume this per-panel map (see DEVELOPERS.md), so each split panel
- *        renders its OWN camera. Renderers that don't read it fall back to the
- *        global (focused) camera.
- *
  *  API: window.__camDir  (the UI is the only consumer)
  *  --------------------------------------------------
- *    version, AXES, DEFAULTS, SLOT_COLORS
+ *    version, AXES, DEFAULTS, PANEL_COLORS
  *    clampAxis(k,v) · fmtAxis(k,v) · parseAxis(k,text)
- *    isSplit() · getMode() · getSlots() · getEditingKey() · setEditingKey(k)
- *    getColor(k) · getAxis(k) · setAxis(k,v) · isEnabled() · setEnabled(b)
- *    isLinkAll() · setLinkAll(b) · applyToAll() · setEnabledAll(b) · getAssignment(k)
+ *    isSplit() · getMode() · getSlots() · getEditingKey() · setEditingKey(name)
+ *    getColor(name) · getAxis(k) · setAxis(k,v) · isEnabled() · setEnabled(b)
+ *    isLinkAll() · setLinkAll(b) · applyToAll() · setEnabledAll(b) · getAssignment(name)
  *    resetCamera() · listPresets() · savePreset(n) · updatePreset(n)
  *    deletePreset(n) · applyPreset(p) · exportPreset(p) · importFromFile(f)
- *    on(ev,fn) · off(ev,fn)   events: 'change'(slotKey) · 'mode' · 'presets'
+ *    on(ev,fn) · off(ev,fn)   events: 'change'(panelName) · 'mode' · 'presets'
  *    destroy()
  *
  *  Profiles are a single SHARED, named library (usable on any panel), with a
  *  per-panel `assignment` (which profile a panel is on, or null = Custom).
- *  Editing follows the focused splitscreen panel. Persisted at LS_STORE (v3),
- *  migrated from the v2 per-slot model.
+ *  Editing follows the focused splitscreen panel. Persisted at LS_STORE (v4,
+ *  name-keyed), migrated from the v3 per-slot model (and v2/v1 before it).
  *
  *  Idempotent: re-injecting this script tears down the previous brain + UI.
  * ==========================================================================*/
@@ -56,12 +59,12 @@
 
   const PLUGIN_ID = 'camera_director';
   const ASSET_BASE = `/api/plugins/${PLUGIN_ID}/assets`;
-  const VERSION = '3.3.2';
+  const VERSION = '3.4.0';
 
-  const LS_STORE = 'camera_director.profiles.v3';  // { live, library, assignments, linkAll, active }
-  const LS_PROFILES = 'camera_director.profiles.v2';  // legacy per-slot model (migrated → v3)
-  const LS_LIVE = 'camera_director.live';        // legacy v1 (migrated → slot A live)
-  const LS_PRESETS = 'camera_director.presets';  // legacy v1 (migrated → shared library)
+  const LS_STORE = 'camera_director.profiles.v3';  // v3+v4 both live here (see _v); { live, library, assignments, linkAll, active }
+  const LS_PROFILES = 'camera_director.profiles.v2';  // legacy per-slot model
+  const LS_LIVE = 'camera_director.live';        // legacy v1
+  const LS_PRESETS = 'camera_director.presets';  // legacy v1
   const EXPORT_KIND = 'slopsmith.camera-director.preset';
   const EXPORT_VERSION = 1;
 
@@ -76,9 +79,12 @@
   const DEFAULTS = Object.freeze({
     enabled: false, heightMul: 1, distMul: 1, yaw: 0, pitch: 0, panX: 0, panY: 0,
   });
-  // Player slots map 1:1 to splitscreen panel indices (A→0, B→1, C→2, D→3).
-  const SLOT_KEYS = ['A', 'B', 'C', 'D'];
-  const SLOT_COLORS = { A: '#4080e0', B: '#e8742c', C: '#3cc46b', D: '#b06cf0' };
+  // Panel accent colors, assigned by panel INDEX (names are arbitrary, so color
+  // tracks position). Wraps past 8 panels.
+  const PANEL_COLORS = ['#4080e0', '#e8742c', '#3cc46b', '#b06cf0', '#e0c040', '#40c0c0', '#e06090', '#90a0b0'];
+  function colorForIndex(i) { const n = PANEL_COLORS.length; return PANEL_COLORS[(((i | 0) % n) + n) % n]; }
+  // Name used for the single (non-split) main view — its own persisted camera.
+  const SINGLE_NAME = 'Main';
 
   // Idempotent teardown of a previous mount (brain + its UI).
   if (window.__camDir && typeof window.__camDir.destroy === 'function') {
@@ -107,164 +113,401 @@
     if (key === 'yaw') return clampAxis('yaw', n / 57.2958);
     return clampAxis(key, n);
   }
-
-  // ── Store (v3): per-slot live cameras + a SHARED named-profile library +
-  //    per-panel assignments (which profile each panel is on). Persisted. ──────
   function profileCam(c) { const o = {}; for (const [a] of AXES) o[a] = clampAxis(a, (c && Number(c[a])) || DEFAULTS[a]); return o; }
+
+  // ── Follower (popped-out) window: splitscreen-aware, read-only camera agent ──
+  // A popped-out panel runs the whole app in a separate window (`?ssFollower=1&
+  // popupId=&panelIndex=N&name=`). It NEVER edits the store — it (a) APPLIES its
+  // panel(s)' cameras, resolved by NAME from the shared store and kept live by
+  // the main window's `{type:'camdir',cams}` broadcasts + `storage` events, and
+  // (b) REPORTS its panel names to main (`{type:'camdir-panels',windowId,names}`)
+  // so main's selector can list and steer them ("steer everything from main").
+  // A follower can itself split, so its panels come from the splitscreen API when
+  // active, else the single URL panel. Identity = popupId (stable per window).
+  (function maybeFollower() {
+    let params; try { params = new URLSearchParams(location.search); } catch (e) { return; }
+    if (params.get('ssFollower') !== '1') return;
+    const pi = parseInt(params.get('panelIndex'), 10);
+    const WIN = params.get('popupId') || ('follower-' + ((pi >= 0 ? pi : 0)));
+    const URL_NAME = (params.get('name') || '').trim() || ('P' + ((pi >= 0 ? pi : 0) + 1));
+    const CH_NAME = 'slopsmith-ss';
+    const ssf = () => window.feedBackSplitscreen || window.slopsmithSplitscreen;
+    const clampAll = (c) => Object.assign({}, DEFAULTS, c || {});
+    let live = {};   // name -> cam, from the shared store + main's broadcasts
+    function loadLive() { try { const s = JSON.parse(localStorage.getItem(LS_STORE) || 'null'); if (s && s.live) live = s.live; } catch (e) { /* ignore */ } }
+    // This follower's panels: the splitscreen API when it has split, else the
+    // single popped panel named by the pop-out URL.
+    function localPanels() {
+      const o = ssf();
+      try {
+        if (o && o.isActive && o.isActive() && o.getPanels) {
+          const g = o.getPanels() || [];
+          if (g.length) return g.map((p) => ({ index: p.index, name: p.name || ('P' + (p.index + 1)), focused: !!p.focused, canvas: p.canvas || null }));
+        }
+      } catch (e) { /* ignore */ }
+      return [{ index: 0, name: URL_NAME, focused: true, canvas: null }];
+    }
+    function applyAll() {
+      const ps = localPanels();
+      const map = {}; let foc = null;
+      ps.forEach((p) => { const c = clampAll(live[p.name]); map[p.index] = c; if (p.focused || foc === null) foc = c; });
+      window.__h3dCamCtlPanels = map;      // per-panel by local index
+      window.__h3dCamCtl = foc || clampAll(null);   // focused / single
+    }
+    let ch = null;
+    const names = () => localPanels().map((p) => p.name);
+    const announce = () => { try { if (ch) ch.postMessage({ type: 'camdir-panels', windowId: WIN, names: names() }); } catch (e) { /* ignore */ } };
+    loadLive(); applyAll();
+    try {
+      if (typeof BroadcastChannel === 'function') {
+        ch = new BroadcastChannel(CH_NAME);
+        ch.addEventListener('message', (ev) => {
+          const m = ev.data || {};
+          if (m.type === 'camdir' && m.cams) { for (const n in m.cams) live[n] = m.cams[n]; applyAll(); }
+          else if (m.type === 'camdir-who') announce();   // main soliciting panel lists
+        });
+        try { ch.postMessage({ type: 'camdir-hello' }); } catch (e) { /* nudge main to send cams */ }
+        announce();
+      }
+    } catch (e) { /* ignore */ }
+    // Cross-window persistence (storage fires in OTHER windows).
+    const onStorage = (e) => { if (e.key !== LS_STORE || !e.newValue) return; try { const s = JSON.parse(e.newValue); if (s && s.live) { live = s.live; applyAll(); } } catch (err) { /* ignore */ } };
+    window.addEventListener('storage', onStorage);
+    // Re-apply + heartbeat-announce (main prunes stale follower entries); the
+    // follower's own layout can change (it may split), so re-announce on change.
+    const poll = setInterval(() => { applyAll(); announce(); }, 1000);
+    const onPanels = () => { applyAll(); announce(); };
+    try { if (window.feedBack && window.feedBack.on) window.feedBack.on('splitscreen:panels-changed', onPanels); } catch (e) { /* ignore */ }
+
+    // ── Direct free-camera mouse control in the follower window ──────────────
+    // The follower is otherwise read-only, but the user expects to orbit/pan/
+    // zoom its own panels by dragging on the canvas (same Blender-nav as main).
+    // To keep MAIN the single store-writer (no cross-window race), the follower
+    // edits its LOCAL applied camera for instant feedback and forwards the result
+    // to main as {type:'camdir-edit'} — main clamps, persists, and rebroadcasts.
+    const fAxis = {}; for (const a of AXES) fAxis[a[0]] = a;
+    const fclamp = (k, v) => { const s = fAxis[k]; if (!s) return Number(v) || 0; return Math.max(s[1], Math.min(s[2], Number(v) || 0)); };
+    const stripF = (c) => { const o = { enabled: !!c.enabled }; for (const a of AXES) o[a[0]] = fclamp(a[0], Number(c[a[0]]) || 0); return o; };
+    const fIsCanvas = (t) => t && (t.id === 'highway' || t.tagName === 'CANVAS');
+    const fOverUI = (e) => e.target && e.target.closest && e.target.closest('#camdir-root');
+    function panelForPoint(x, y) {
+      const ps = localPanels();
+      for (const p of ps) {
+        if (!p.canvas || !p.canvas.getBoundingClientRect) continue;
+        const r = p.canvas.getBoundingClientRect();
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return p;
+      }
+      // Single-panel follower (no per-panel canvas): the whole window is it.
+      if (ps.length === 1 && !ps[0].canvas) return ps[0];
+      return null;
+    }
+    let _lastSend = 0;
+    function sendEdit(name, cam, force) {
+      const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+      if (!force && now - _lastSend < 50) return;   // throttle live drag
+      _lastSend = now;
+      try { if (ch) ch.postMessage({ type: 'camdir-edit', windowId: WIN, name, cam: stripF(cam) }); } catch (e) { /* ignore */ }
+    }
+    let fdrag = null;
+    const fL = [];
+    const fAdd = (el, ev, fn, opts) => { el.addEventListener(ev, fn, opts); fL.push([el, ev, fn, opts]); };
+    fAdd(window, 'pointerdown', (e) => {
+      if (fOverUI(e) || !fIsCanvas(e.target)) return;
+      const p = panelForPoint(e.clientX, e.clientY); if (!p) return;
+      const cam = live[p.name]; if (!cam || !cam.enabled) return;   // free-cam must be armed (from main)
+      fdrag = { name: p.name, x: e.clientX, y: e.clientY };
+    });
+    fAdd(window, 'pointermove', (e) => {
+      if (!fdrag) return;
+      const b = Object.assign({}, DEFAULTS, live[fdrag.name]);   // work on a copy
+      const dx = e.clientX - fdrag.x, dy = e.clientY - fdrag.y; fdrag.x = e.clientX; fdrag.y = e.clientY;
+      if (e.shiftKey) {
+        b.panX = fclamp('panX', (Number(b.panX) || 0) + dx * 0.5);
+        b.panY = fclamp('panY', (Number(b.panY) || 0) - dy * 0.5);
+      } else if (e.ctrlKey) {
+        b.distMul = fclamp('distMul', (Number(b.distMul) || 1) * (1 + dy * 0.004));
+      } else if (e.altKey) {
+        b.heightMul = fclamp('heightMul', (Number(b.heightMul) || 1) - dy * 0.004);
+      } else {
+        b.yaw = fclamp('yaw', (Number(b.yaw) || 0) + dx * 0.005);
+        b.pitch = fclamp('pitch', (Number(b.pitch) || 0) - dy * 0.6);
+      }
+      live[fdrag.name] = b; applyAll(); sendEdit(fdrag.name, b, false);
+    });
+    fAdd(window, 'pointerup', () => { if (fdrag) { sendEdit(fdrag.name, live[fdrag.name], true); fdrag = null; } });
+    fAdd(window, 'wheel', (e) => {
+      if (fOverUI(e) || !fIsCanvas(e.target)) return;
+      const p = panelForPoint(e.clientX, e.clientY); if (!p) return;
+      const cam = live[p.name]; if (!cam || !cam.enabled) return;
+      e.preventDefault();
+      const b = Object.assign({}, DEFAULTS, cam);
+      b.distMul = fclamp('distMul', (Number(b.distMul) || 1) * (1 + (e.deltaY > 0 ? 0.06 : -0.06)));
+      live[p.name] = b; applyAll(); sendEdit(p.name, b, true);
+    }, { passive: false });
+
+    window.__camDir = {
+      version: VERSION, isFollower: true, windowId: WIN,
+      destroy() {
+        clearInterval(poll);
+        try { if (window.feedBack && window.feedBack.off) window.feedBack.off('splitscreen:panels-changed', onPanels); } catch (e) { /* ignore */ }
+        for (const [el, ev, fn, opts] of fL) { try { el.removeEventListener(ev, fn, opts); } catch (e) { /* ignore */ } }
+        try { if (ch) ch.close(); } catch (e) { /* ignore */ }
+        window.removeEventListener('storage', onStorage);
+      },
+    };
+    window.__camDir.__followerHandled = true;
+  })();
+  if (window.__camDir && window.__camDir.__followerHandled) return;
+
+  // ── Store (v4): per-panel-NAME live cameras + a SHARED named-profile library +
+  //    per-panel-NAME assignments (which profile each panel is on). Persisted. ─
+  //    Migrated from v3 (slot-keyed): the slot cameras/assignments are stashed
+  //    by index (_legacyLive/_legacyAssign) and adopted the first time a panel
+  //    appears at that index, so existing per-panel cameras survive the rename.
   function loadStore() {
-    const out = { active: 'A', live: {}, library: [], assignments: {}, linkAll: false, _v: 3 };
-    for (const k of SLOT_KEYS) { out.live[k] = Object.assign({}, DEFAULTS); out.assignments[k] = null; }
-    // Prefer v3.
+    const out = { active: null, live: {}, library: [], assignments: {}, linkAll: false, _v: 4, _legacyLive: [], _legacyAssign: [] };
     let s = null;
     try { s = JSON.parse(localStorage.getItem(LS_STORE) || 'null'); } catch (e) { /* corrupt */ }
-    if (s && s.live && Array.isArray(s.library)) {
-      out.active = SLOT_KEYS.includes(s.active) ? s.active : 'A';
+    // v4 (name-keyed) — load as-is.
+    if (s && s._v === 4 && s.live && Array.isArray(s.library)) {
+      out.active = (typeof s.active === 'string') ? s.active : null;
       out.linkAll = !!s.linkAll;
-      for (const k of SLOT_KEYS) {
-        out.live[k] = Object.assign({}, DEFAULTS, s.live[k]);
-        out.assignments[k] = (s.assignments && s.assignments[k]) || null;
-      }
+      for (const n in s.live) out.live[n] = Object.assign({}, DEFAULTS, s.live[n]);
+      out.assignments = {}; for (const n in (s.assignments || {})) out.assignments[n] = s.assignments[n] || null;
       out.library = s.library.filter((p) => p && p.name && p.cam)
-        .map((p) => ({ name: p.name, cam: profileCam(p.cam), color: p.color || SLOT_COLORS.A, savedAt: p.savedAt || '' }));
+        .map((p) => ({ name: p.name, cam: profileCam(p.cam), color: p.color || PANEL_COLORS[0], savedAt: p.savedAt || '' }));
       return out;
     }
-    // Migrate v2 (per-slot live + per-slot presets) → v3.
+    // v3 (slot-keyed live + shared library) → v4. Keep the library; stash slot
+    // cameras/assignments by index for adoption-on-first-appearance.
+    const SK = ['A', 'B', 'C', 'D'];
+    if (s && s.live && Array.isArray(s.library)) {
+      out.linkAll = !!s.linkAll;
+      out.library = s.library.filter((p) => p && p.name && p.cam)
+        .map((p) => ({ name: p.name, cam: profileCam(p.cam), color: p.color || PANEL_COLORS[0], savedAt: p.savedAt || '' }));
+      out._legacyLive = SK.map((k) => (s.live[k] ? Object.assign({}, DEFAULTS, s.live[k]) : null));
+      out._legacyAssign = SK.map((k) => ((s.assignments && s.assignments[k]) || null));
+      return out;
+    }
+    // v2 (per-slot live + per-slot presets) → v4.
     let v2 = null;
     try { v2 = JSON.parse(localStorage.getItem(LS_PROFILES) || 'null'); } catch (e) { /* corrupt */ }
     if (v2 && v2.players) {
-      out.active = SLOT_KEYS.includes(v2.active) ? v2.active : 'A';
       out.linkAll = !!v2.linkAll;
       const byName = new Map();
-      for (const k of SLOT_KEYS) {
+      out._legacyLive = SK.map((k) => {
         const p = v2.players[k] || {};
-        out.live[k] = Object.assign({}, DEFAULTS, p.live || {});
         if (Array.isArray(p.presets)) for (const pr of p.presets) {
-          if (pr && pr.name && pr.cam && !byName.has(pr.name)) {
-            byName.set(pr.name, { name: pr.name, cam: profileCam(pr.cam), color: pr.color || SLOT_COLORS[k], savedAt: pr.savedAt || '' });
-          }
+          if (pr && pr.name && pr.cam && !byName.has(pr.name)) byName.set(pr.name, { name: pr.name, cam: profileCam(pr.cam), color: pr.color || colorForIndex(SK.indexOf(k)), savedAt: pr.savedAt || '' });
         }
-      }
+        return p.live ? Object.assign({}, DEFAULTS, p.live) : null;
+      });
       out.library = [...byName.values()];
       return out;
     }
-    // Migrate v1 legacy (single live + flat presets) → slot A + shared library.
-    try { const l = JSON.parse(localStorage.getItem(LS_LIVE) || 'null'); if (l) out.live.A = Object.assign({}, DEFAULTS, l); } catch (e) { /* ignore */ }
+    // v1 legacy (single live + flat presets) → SINGLE live + shared library.
+    try { const l = JSON.parse(localStorage.getItem(LS_LIVE) || 'null'); if (l) out.live[SINGLE_NAME] = Object.assign({}, DEFAULTS, l); } catch (e) { /* ignore */ }
     try {
       const pr = JSON.parse(localStorage.getItem(LS_PRESETS) || 'null');
-      if (Array.isArray(pr)) for (const p of pr) if (p && p.name && p.cam) out.library.push({ name: p.name, cam: profileCam(p.cam), color: p.color || SLOT_COLORS.A, savedAt: p.savedAt || '' });
+      if (Array.isArray(pr)) for (const p of pr) if (p && p.name && p.cam) out.library.push({ name: p.name, cam: profileCam(p.cam), color: p.color || PANEL_COLORS[0], savedAt: p.savedAt || '' });
     } catch (e) { /* ignore */ }
     return out;
   }
   const profiles = loadStore();
   let _saveT = 0;
-  function saveProfiles() { try { localStorage.setItem(LS_STORE, JSON.stringify(profiles)); } catch (e) { /* quota */ } }
+  function saveProfiles() {
+    // Persist only the durable fields (drop the _legacy* migration scratch).
+    try {
+      localStorage.setItem(LS_STORE, JSON.stringify({
+        _v: 4, active: profiles.active, live: profiles.live,
+        library: profiles.library, assignments: profiles.assignments, linkAll: profiles.linkAll,
+      }));
+    } catch (e) { /* quota */ }
+  }
   function saveSoon() { clearTimeout(_saveT); _saveT = setTimeout(saveProfiles, 250); }
 
-  // Live bridge object per slot — mutated IN PLACE so the renderer keeps reading
-  // the same reference frame to frame.
+  // ── Live bridge objects, keyed by panel NAME, created lazily and mutated IN
+  //    PLACE so the renderer keeps reading the same reference frame to frame. ──
   const bridges = {};
-  for (const k of SLOT_KEYS) bridges[k] = Object.assign({}, DEFAULTS, profiles.live[k]);
-  function persistSlot(k) { profiles.live[k] = stripLive(bridges[k]); saveSoon(); }
+  const _legacyUsed = new Set();
+  function ensureBridge(name, index) {
+    if (!bridges[name]) {
+      let seed = profiles.live[name];
+      if (!seed && index != null && profiles._legacyLive && profiles._legacyLive[index] && !_legacyUsed.has(index)) {
+        seed = profiles._legacyLive[index];
+        if (profiles._legacyAssign && profiles._legacyAssign[index] && profiles.assignments[name] == null) {
+          profiles.assignments[name] = profiles._legacyAssign[index];
+        }
+        _legacyUsed.add(index);
+      }
+      bridges[name] = Object.assign({}, DEFAULTS, seed || {});
+      profiles.live[name] = stripLive(bridges[name]);
+    }
+    return bridges[name];
+  }
+  function persistName(name) { if (bridges[name]) profiles.live[name] = stripLive(bridges[name]); saveSoon(); }
 
-  // ── Splitscreen awareness ───────────────────────────────────────────────────
-  function ss() { return window.slopsmithSplitscreen; }
+  // ── Splitscreen awareness (panels identified by NAME via getPanels) ─────────
+  function ss() { return window.feedBackSplitscreen || window.slopsmithSplitscreen; }
   function isSplit() { try { return !!(ss() && ss().isActive && ss().isActive()); } catch (e) { return false; } }
-  function panelCanvasByIndex() {
-    const arr = [];
-    if (!isSplit()) return arr;
+  // Canonical panel list for THIS window: [{ index, name, canvas, focused }].
+  // Single (non-split) mode → one synthetic 'Main' panel.
+  function getPanelList() {
+    if (!isSplit()) return [{ index: 0, name: SINGLE_NAME, canvas: null, focused: true }];
     const o = ss();
+    let arr = [];
+    try { arr = (o.getPanels && o.getPanels()) || []; } catch (e) { arr = []; }
+    if (arr.length) {
+      return arr.map((p) => ({ index: p.index, name: (p.name || ('P' + (p.index + 1))), canvas: p.canvas || null, focused: !!p.focused }));
+    }
+    // Fallback for an older splitscreen without getPanels(): enumerate canvases.
+    const out = [];
     document.querySelectorAll('canvas').forEach((c) => {
-      try { const i = o.panelIndexFor(c); if (i != null && i >= 0) arr[i] = c; } catch (e) { /* ignore */ }
+      try { const i = o.panelIndexFor(c); if (i != null && i >= 0) out[i] = { index: i, name: 'P' + (i + 1), canvas: c, focused: false }; } catch (e) { /* ignore */ }
     });
-    return arr;
+    const list = out.filter(Boolean);
+    if (list.length) { let f = false; for (const p of list) { try { if (ss().isCanvasFocused(p.canvas)) { p.focused = true; f = true; break; } } catch (e) { /* ignore */ } } if (!f) list[0].focused = true; }
+    return list.length ? list : [{ index: 0, name: SINGLE_NAME, canvas: null, focused: true }];
   }
-  function panelCount() {
-    if (!isSplit()) return 1;
-    const n = panelCanvasByIndex().filter(Boolean).length;
-    return Math.max(2, Math.min(SLOT_KEYS.length, n || 2));
-  }
-  function activeSlots() { return isSplit() ? SLOT_KEYS.slice(0, panelCount()) : ['A']; }
-  function slotForCanvas(canvas) {
-    if (!isSplit()) return 'A';
-    try { const i = ss().panelIndexFor(canvas); if (i != null && i >= 0 && i < SLOT_KEYS.length) return SLOT_KEYS[i]; } catch (e) { /* ignore */ }
-    return null;
-  }
-  // Resolve a panel slot from a POINT (clientX/Y). The 3D highways mount a 2D
+  function currentPanelNames() { return getPanelList().map((p) => p.name); }
+  function focusedName() { const ps = getPanelList(); const f = ps.find((p) => p.focused); return (f || ps[0] || {}).name || SINGLE_NAME; }
+  // Local panel index for a name, or null if the name isn't tiled in THIS window
+  // (e.g. a popped-out/remote panel main is steering by name only).
+  function indexForName(name) { const p = getPanelList().find((x) => x.name === name); return p ? p.index : null; }
+  function colorForName(name) { return colorForIndex(indexForName(name)); }
+  // Resolve a panel NAME from a POINT (clientX/Y). The 3D highways mount a 2D
   // overlay canvas ON TOP of the WebGL canvas; that overlay is the pointer target
   // and resolves to null via panelIndexFor — which is why click-drag-on-canvas
-  // targeted no panel in splitscreen. Hit-test the panels' WebGL canvas rects
-  // instead so the drag lands on whichever panel the pointer is over.
-  function slotForPoint(x, y) {
-    if (!isSplit()) return 'A';
-    const arr = panelCanvasByIndex();
-    for (let i = 0; i < arr.length; i++) {
-      const c = arr[i]; if (!c) continue;
+  // targeted no panel in splitscreen. Hit-test the panels' WebGL canvas rects.
+  function nameForPoint(x, y) {
+    if (!isSplit()) return SINGLE_NAME;
+    for (const p of getPanelList()) {
+      const c = p.canvas; if (!c) continue;
       const r = c.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return SLOT_KEYS[i];
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return p.name;
     }
     return null;
-  }
-  function focusedSlot() {
-    if (!isSplit()) return 'A';
-    const arr = panelCanvasByIndex();
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i]) { try { if (ss().isCanvasFocused(arr[i])) return SLOT_KEYS[i]; } catch (e) { /* ignore */ } }
-    }
-    return 'A';
   }
 
   // ── Bridge wiring ───────────────────────────────────────────────────────────
   function writeBridge() {
     if (isSplit()) {
-      const slots = activeSlots();
+      const panels = getPanelList();
       const map = {};
-      slots.forEach((k, idx) => { map[idx] = bridges[k]; });
+      panels.forEach((p) => { map[p.index] = ensureBridge(p.name, p.index); });
       window.__h3dCamCtlPanels = map;
-      const fi = SLOT_KEYS.indexOf(focusedSlot());
-      window.__h3dCamCtl = map[fi] || map[0] || bridges.A;
+      const foc = panels.find((p) => p.focused) || panels[0];
+      window.__h3dCamCtl = (foc && map[foc.index]) || Object.assign({}, DEFAULTS);
     } else {
       window.__h3dCamCtlPanels = null;
-      window.__h3dCamCtl = bridges.A;
+      window.__h3dCamCtl = ensureBridge(SINGLE_NAME, 0);
     }
+    broadcastSoon();
   }
 
-  // ── Editing slot (which player's controls the UI is showing) ────────────────
-  let editingKey = activeSlots().includes(profiles.active) ? profiles.active : 'A';
-  function editBridge() { return bridges[editingKey]; }
+  // ── Cross-window aggregation: steer popped-out panels from THIS (main) window ─
+  // Followers (separate windows) can't read this window's globals, so we push
+  // EVERY known panel camera BY NAME over BroadcastChannel('slopsmith-ss') — not
+  // just this window's tiled panels — so a follower hosting a name main doesn't
+  // tile still receives its camera. In return, followers announce their panel
+  // names (`camdir-panels`) so main can list + steer them. Popped-out panels are
+  // tracked per follower window and pruned on close/dock or staleness.
+  let _camCh = null;
+  const remotePanels = new Map();   // windowId → { names:[…], ts }
+  const _nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : 0);
+  function remoteNames() {
+    const seen = new Set(); const out = [];
+    for (const v of remotePanels.values()) for (const n of (v.names || [])) if (!seen.has(n)) { seen.add(n); out.push(n); }
+    return out;
+  }
+  function pruneRemotes() {
+    const now = _nowMs(); let changed = false;
+    for (const [wid, v] of remotePanels) if (now - v.ts > 3000) { remotePanels.delete(wid); changed = true; }
+    if (changed) emit('mode');
+  }
+  function camChannel() {
+    if (!_camCh && typeof BroadcastChannel === 'function') {
+      try {
+        _camCh = new BroadcastChannel('slopsmith-ss');
+        _camCh.addEventListener('message', (ev) => {
+          const m = ev.data || {};
+          if (m.type === 'camdir-hello') { broadcastCams(); requestRemotePanels(); }
+          else if (m.type === 'camdir-panels' && m.windowId) {
+            // Heartbeat lands every ~1s; only rebuild main's UI when the reported
+            // set actually changed (else a slider drag would be interrupted).
+            const next = Array.isArray(m.names) ? m.names.slice() : [];
+            const prev = remotePanels.get(m.windowId);
+            const changed = !prev || prev.names.join('') !== next.join('');
+            remotePanels.set(m.windowId, { names: next, ts: _nowMs() });
+            if (changed) { emit('mode'); broadcastCams(); }
+          } else if (m.type === 'camdir-edit' && m.name && m.cam) {
+            // A follower dragged its own panel's camera and forwarded the result.
+            // Main is the sole store-writer: clamp, persist, rebroadcast so every
+            // window (and the main UI, if it's the edited panel) converges.
+            const b = ensureBridge(m.name, indexForName(m.name));
+            b.enabled = !!m.cam.enabled;
+            for (const [a] of AXES) if (a in m.cam) b[a] = clampAxis(a, Number(m.cam[a]) || 0);
+            profiles.assignments[m.name] = null;   // manual tweak → Custom
+            persistName(m.name);
+            if (m.name === editingName) emit('change', m.name);
+            broadcastSoon();
+          } else if ((m.type === 'closed' || m.type === 'docked') && m.popupId) {
+            // splitscreen's own follower lifecycle messages — a popped panel that
+            // closed or re-docked is no longer steered remotely.
+            if (remotePanels.delete(m.popupId)) emit('mode');
+          }
+        });
+      } catch (e) { _camCh = null; }
+    }
+    return _camCh;
+  }
+  function requestRemotePanels() { const ch = camChannel(); if (ch) { try { ch.postMessage({ type: 'camdir-who' }); } catch (e) { /* ignore */ } } }
+  function broadcastCams() {
+    const ch = camChannel(); if (!ch) return;
+    for (const p of getPanelList()) profiles.live[p.name] = stripLive(ensureBridge(p.name, p.index)); // refresh this window's panels
+    const cams = {};
+    for (const n in profiles.live) cams[n] = stripLive(profiles.live[n]);
+    try { ch.postMessage({ type: 'camdir', cams }); } catch (e) { /* ignore */ }
+  }
+  let _bcT = 0;
+  function broadcastSoon() { if (_bcT) return; _bcT = setTimeout(() => { _bcT = 0; broadcastCams(); }, 60); }
+
+  // ── Editing panel (which panel's controls the UI is showing) ─────────────────
+  let editingName = (typeof profiles.active === 'string' && profiles.active) || SINGLE_NAME;
+  function editBridge() { return ensureBridge(editingName, indexForName(editingName)); }
 
   // ── Link-all: one camera shared across every panel ──────────────────────────
-  // When on, editing/dragging any panel mirrors its camera (all axes + enabled)
-  // to every active panel, so you tweak once and it applies across the board.
   let linkAll = !!profiles.linkAll;
-  function syncLink(srcK) {
+  function syncLink(srcName) {
     if (!linkAll || !isSplit()) return;
-    const src = bridges[srcK];
-    for (const k of activeSlots()) {
-      if (k === srcK) continue;
-      const d = bridges[k];
+    if (!currentPanelNames().includes(srcName)) return;   // remote-panel edits don't mirror into local panels
+    const src = bridges[srcName]; if (!src) return;
+    for (const p of getPanelList()) {
+      if (p.name === srcName) continue;
+      const d = ensureBridge(p.name, p.index);
       d.enabled = src.enabled;
       for (const [a] of AXES) d[a] = src[a];
-      profiles.assignments[k] = profiles.assignments[srcK];
-      persistSlot(k); emit('change', k);
+      profiles.assignments[p.name] = profiles.assignments[srcName] || null;
+      persistName(p.name); emit('change', p.name);
     }
   }
-  // One-shot: copy the editing panel's camera (+ enabled + assignment) to every panel.
+  // One-shot: copy the editing panel's camera (+ enabled + assignment) to all.
   function applyToAll() {
     if (!isSplit()) return;
-    const src = bridges[editingKey];
-    for (const k of activeSlots()) {
-      if (k === editingKey) continue;
-      const d = bridges[k];
+    const src = ensureBridge(editingName, indexForName(editingName));
+    for (const p of getPanelList()) {
+      if (p.name === editingName) continue;
+      const d = ensureBridge(p.name, p.index);
       d.enabled = src.enabled;
       for (const [a] of AXES) d[a] = src[a];
-      profiles.assignments[k] = profiles.assignments[editingKey];
-      persistSlot(k); emit('change', k);
+      profiles.assignments[p.name] = profiles.assignments[editingName] || null;
+      persistName(p.name); emit('change', p.name);
     }
     writeBridge(); emit('mode');
   }
   // Enable/disable every panel at once.
   function setEnabledAll(b) {
-    for (const k of activeSlots()) { bridges[k].enabled = !!b; persistSlot(k); emit('change', k); }
+    for (const p of getPanelList()) { ensureBridge(p.name, p.index).enabled = !!b; persistName(p.name); emit('change', p.name); }
     writeBridge();
   }
 
@@ -274,11 +517,11 @@
   function off(ev, fn) { if (subs[ev]) subs[ev] = subs[ev].filter((f) => f !== fn); }
   function emit(ev, arg) { (subs[ev] || []).forEach((f) => { try { f(arg); } catch (e) { /* ignore */ } }); }
 
-  // ── Tween (preset load / reset) on a given slot ─────────────────────────────
+  // ── Tween (preset load / reset) on a given panel ────────────────────────────
   let _raf = 0;
-  function tween(k, target, dur = 0.55) {
+  function tween(name, target, dur = 0.55) {
     cancelAnimationFrame(_raf);
-    const b = bridges[k];
+    const b = ensureBridge(name, indexForName(name));
     const from = {}; for (const [a] of AXES) from[a] = Number(b[a]) || 0;
     const start = performance.now();
     const ease = (x) => 1 - Math.pow(1 - x, 3);
@@ -286,48 +529,45 @@
       const p = Math.min(1, (now - start) / (dur * 1000));
       const e = ease(p);
       for (const [a] of AXES) { if (a in target) b[a] = from[a] + (target[a] - from[a]) * e; }
-      syncLink(k);
-      emit('change', k);
-      if (p < 1) _raf = requestAnimationFrame(step); else persistSlot(k);
+      syncLink(name);
+      emit('change', name);
+      if (p < 1) _raf = requestAnimationFrame(step); else persistName(name);
     };
     _raf = requestAnimationFrame(step);
   }
 
   // ── Shared named-profile library (usable on ANY panel) + per-panel assign ────
-  // Profiles are a single global list (not per-slot): save one on Player 1, apply
-  // it on Player 2. `profiles.assignments[k]` tracks which profile a panel is on
-  // (or null = Custom, after a manual tweak).
   function listPresets() { return profiles.library; }
-  function currentCam(k) { const cam = {}; for (const [a] of AXES) cam[a] = clampAxis(a, Number(bridges[k][a]) || 0); return cam; }
-  function savePreset(name, k) {
-    k = k || editingKey; name = String(name || '').trim(); if (!name) return;
+  function currentCam(name) { const b = ensureBridge(name, indexForName(name)); const cam = {}; for (const [a] of AXES) cam[a] = clampAxis(a, Number(b[a]) || 0); return cam; }
+  function savePreset(name, panelName) {
+    panelName = panelName || editingName; name = String(name || '').trim(); if (!name) return;
     profiles.library = profiles.library.filter((p) => p.name !== name);
-    profiles.library.push({ name, cam: currentCam(k), color: SLOT_COLORS[k], savedAt: new Date().toISOString() });
-    profiles.assignments[k] = name;   // saving puts this panel ON the new profile
+    profiles.library.push({ name, cam: currentCam(panelName), color: colorForName(panelName), savedAt: new Date().toISOString() });
+    profiles.assignments[panelName] = name;   // saving puts this panel ON the new profile
     saveProfiles(); emit('presets'); emit('mode');
   }
-  function updatePreset(name, k) {
-    k = k || editingKey;
+  function updatePreset(name, panelName) {
+    panelName = panelName || editingName;
     const i = profiles.library.findIndex((p) => p.name === name); if (i < 0) return;
-    profiles.library[i] = { name, cam: currentCam(k), color: profiles.library[i].color || SLOT_COLORS[k], savedAt: new Date().toISOString() };
-    profiles.assignments[k] = name;
+    profiles.library[i] = { name, cam: currentCam(panelName), color: profiles.library[i].color || colorForName(panelName), savedAt: new Date().toISOString() };
+    profiles.assignments[panelName] = name;
     saveProfiles(); emit('presets'); emit('mode');
   }
   function deletePreset(name) {
     profiles.library = profiles.library.filter((p) => p.name !== name);
-    for (const k of SLOT_KEYS) if (profiles.assignments[k] === name) profiles.assignments[k] = null;
+    for (const n in profiles.assignments) if (profiles.assignments[n] === name) profiles.assignments[n] = null;
     saveProfiles(); emit('presets'); emit('mode');
   }
-  function applyPreset(preset, k) {
-    k = k || editingKey; if (!preset || !preset.cam) return;
-    bridges[k].enabled = true;
-    profiles.assignments[k] = preset.name || null;   // set before tween so syncLink mirrors it
+  function applyPreset(preset, panelName) {
+    panelName = panelName || editingName; if (!preset || !preset.cam) return;
+    ensureBridge(panelName, indexForName(panelName)).enabled = true;
+    profiles.assignments[panelName] = preset.name || null;   // set before tween so syncLink mirrors it
     const target = {}; for (const [a] of AXES) target[a] = clampAxis(a, Number(preset.cam[a]) || 0);
-    tween(k, target); syncLink(k); emit('change', k); emit('mode'); persistSlot(k);
+    tween(panelName, target); syncLink(panelName); emit('change', panelName); emit('mode'); persistName(panelName);
   }
-  function resetCamera(k) {
-    k = k || editingKey; profiles.assignments[k] = null;
-    const target = {}; for (const [a] of AXES) target[a] = DEFAULTS[a]; tween(k, target); emit('mode');
+  function resetCamera(panelName) {
+    panelName = panelName || editingName; profiles.assignments[panelName] = null;
+    const target = {}; for (const [a] of AXES) target[a] = DEFAULTS[a]; tween(panelName, target); emit('mode');
   }
 
   function exportPreset(payload) {
@@ -341,8 +581,8 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  async function importFromFile(file, k) {
-    k = k || editingKey;
+  async function importFromFile(file, panelName) {
+    panelName = panelName || editingName;
     try {
       const data = JSON.parse(await file.text());
       if (!data || data.kind !== EXPORT_KIND) throw 0;
@@ -350,11 +590,11 @@
       if (!inc.length) throw 0;
       const byName = new Map(profiles.library.map((p) => [p.name, p]));
       for (const p of inc) {
-        if (p && p.name && p.cam) byName.set(p.name, { name: p.name, cam: p.cam, color: p.color || SLOT_COLORS[k], savedAt: p.savedAt || new Date().toISOString() });
+        if (p && p.name && p.cam) byName.set(p.name, { name: p.name, cam: p.cam, color: p.color || colorForName(panelName), savedAt: p.savedAt || new Date().toISOString() });
       }
       profiles.library = [...byName.values()];
       saveProfiles(); emit('presets');
-      if (inc.length === 1) applyPreset(inc[0], k);
+      if (inc.length === 1) applyPreset(inc[0], panelName);
       return true;
     } catch (e) { return false; }
   }
@@ -367,13 +607,13 @@
   let drag = null;
   addL(window, 'pointerdown', (e) => {
     if (overUI(e) || !isCanvas(e.target)) return;
-    const k = slotForPoint(e.clientX, e.clientY);
-    if (!k || !bridges[k].enabled) return;
-    drag = { k, x: e.clientX, y: e.clientY };
+    const name = nameForPoint(e.clientX, e.clientY);
+    if (!name || !ensureBridge(name, indexForName(name)).enabled) return;
+    drag = { name, x: e.clientX, y: e.clientY };
   });
   addL(window, 'pointermove', (e) => {
     if (!drag) return;
-    const b = bridges[drag.k];
+    const b = ensureBridge(drag.name, indexForName(drag.name));
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     drag.x = e.clientX; drag.y = e.clientY;
     if (e.shiftKey) {
@@ -387,74 +627,109 @@
       b.yaw = clampAxis('yaw', (Number(b.yaw) || 0) + dx * 0.005);
       b.pitch = clampAxis('pitch', (Number(b.pitch) || 0) - dy * 0.6);
     }
-    profiles.assignments[drag.k] = null; syncLink(drag.k); emit('change', drag.k); saveSoon();
+    profiles.assignments[drag.name] = null; syncLink(drag.name); emit('change', drag.name); saveSoon();
   });
-  addL(window, 'pointerup', () => { if (drag) { persistSlot(drag.k); drag = null; } });
+  addL(window, 'pointerup', () => { if (drag) { persistName(drag.name); drag = null; } });
   addL(window, 'wheel', (e) => {
     if (overUI(e) || !isCanvas(e.target)) return;
-    const k = slotForPoint(e.clientX, e.clientY);
-    if (!k || !bridges[k].enabled) return;
+    const name = nameForPoint(e.clientX, e.clientY);
+    if (!name || !ensureBridge(name, indexForName(name)).enabled) return;
     e.preventDefault();
-    const b = bridges[k];
+    const b = bridges[name];
     b.distMul = clampAxis('distMul', (Number(b.distMul) || 1) * (1 + (e.deltaY > 0 ? 0.06 : -0.06)));
-    profiles.assignments[k] = null; syncLink(k); emit('change', k); persistSlot(k);
+    profiles.assignments[name] = null; syncLink(name); emit('change', name); persistName(name);
   }, { passive: false });
 
   // ── Mode / focus reconciliation ─────────────────────────────────────────────
   let _lastSig = '';
-  function modeSig() { return isSplit() ? 'split:' + activeSlots().join('') + ':' + focusedSlot() : 'single'; }
+  function modeSig() {
+    if (!isSplit()) return 'single';
+    const ps = getPanelList();
+    return 'split:' + ps.map((p) => p.name).join('|') + ':' + ((ps.find((p) => p.focused) || {}).name || '');
+  }
   function reconcile() {
     const sig = modeSig();
     if (sig === _lastSig) return;
     _lastSig = sig;
     // Editing follows the FOCUSED panel: clicking a splitscreen panel switches
-    // the Camera Director's target (highlighted tab + profile dropdown + sliders)
-    // to that panel. Tab clicks don't change focus, so sig is unchanged then and
-    // this early-returns — the tab selection is preserved until focus moves.
+    // the Camera Director's target (highlighted entry + profile dropdown +
+    // sliders) to that panel. List clicks don't change focus, so sig is
+    // unchanged then and this early-returns — the selection is preserved until
+    // focus moves.
     if (isSplit()) {
-      const fk = focusedSlot();
-      if (activeSlots().includes(fk)) { editingKey = fk; profiles.active = fk; }
+      const fn = focusedName();
+      if (currentPanelNames().includes(fn)) { editingName = fn; profiles.active = fn; }
+    } else if (editingName === SINGLE_NAME || currentPanelNames().includes(editingName)) {
+      // Non-split: default to the single view — but don't yank the user off a
+      // remote (popped-out) panel they explicitly selected to steer.
+      editingName = SINGLE_NAME; profiles.active = SINGLE_NAME;
     }
-    if (!activeSlots().includes(editingKey)) editingKey = activeSlots()[0] || 'A';
+    // Only snap back if the edit target vanished entirely (not local AND not a
+    // known remote panel).
+    if (!currentPanelNames().includes(editingName) && !remoteNames().includes(editingName)) {
+      editingName = currentPanelNames()[0] || SINGLE_NAME;
+    }
     writeBridge();
     emit('mode');
   }
   const _pollT = setInterval(reconcile, 600);
   try { if (ss() && ss().onFocusChange) ss().onFocusChange(reconcile); } catch (e) { /* ignore */ }
+  // Panel add/remove/rename fires this on the feedBack bus — re-sync promptly.
+  const onPanelsChanged = () => { _lastSig = ''; reconcile(); };
+  try { if (window.feedBack && window.feedBack.on) window.feedBack.on('splitscreen:panels-changed', onPanelsChanged); } catch (e) { /* ignore */ }
   writeBridge();
+  // Push camera edits to popped-out follower windows: on every change (throttled)
+  // plus a slow heartbeat so a late-joining / reconnecting follower stays synced;
+  // the heartbeat also prunes followers that went stale (window closed silently).
+  on('change', broadcastSoon);
+  const _hbT = setInterval(() => { broadcastCams(); pruneRemotes(); }, 1000);
+  // Solicit any already-open follower windows to announce their panels.
+  camChannel(); requestRemotePanels();
 
   // ── Public API ──────────────────────────────────────────────────────────────
   window.__camDir = {
     version: VERSION,
-    AXES, DEFAULTS, SLOT_COLORS,
+    AXES, DEFAULTS, PANEL_COLORS,
     clampAxis, fmtAxis, parseAxis,
     isSplit, getMode: () => (isSplit() ? 'split' : 'single'),
-    getSlots() { return activeSlots().map((k, idx) => ({ key: k, color: SLOT_COLORS[k], label: idx + 1, enabled: !!bridges[k].enabled })); },
-    getEditingKey: () => editingKey,
-    setEditingKey(k) { if (activeSlots().includes(k)) { editingKey = k; profiles.active = k; saveSoon(); emit('mode'); } },
-    getColor: (k) => SLOT_COLORS[k || editingKey],
+    // Panel list for the UI: this window's tiled panels first, then popped-out
+    // (remote) panels reported by follower windows — so main can steer them all.
+    // key = panel NAME, label = name, color by position; `remote` flags followers.
+    getSlots() {
+      const local = getPanelList().map((p) => ({ key: p.name, color: colorForIndex(p.index), label: p.name, enabled: !!ensureBridge(p.name, p.index).enabled, focused: !!p.focused, remote: false }));
+      const seen = new Set(local.map((s) => s.key));
+      let ri = local.length;
+      const remotes = [];
+      for (const n of remoteNames()) { if (seen.has(n)) continue; seen.add(n); remotes.push({ key: n, color: colorForIndex(ri++), label: n, enabled: !!ensureBridge(n, null).enabled, focused: false, remote: true }); }
+      return local.concat(remotes);
+    },
+    getEditingKey: () => editingName,
+    setEditingKey(name) { if (currentPanelNames().includes(name) || remoteNames().includes(name)) { editingName = name; profiles.active = name; saveSoon(); emit('mode'); } },
+    getColor: (name) => colorForName(name || editingName),
     getAxis: (key) => Number(editBridge()[key]) || 0,
-    setAxis(key, val) { editBridge()[key] = clampAxis(key, val); profiles.assignments[editingKey] = null; syncLink(editingKey); emit('change', editingKey); persistSlot(editingKey); },
-    getAssignment: (k) => profiles.assignments[k || editingKey] || null,
+    setAxis(key, val) { editBridge()[key] = clampAxis(key, val); profiles.assignments[editingName] = null; syncLink(editingName); emit('change', editingName); persistName(editingName); },
+    getAssignment: (name) => profiles.assignments[name || editingName] || null,
     isEnabled: () => !!editBridge().enabled,
-    setEnabled(b) { editBridge().enabled = !!b; syncLink(editingKey); writeBridge(); emit('change', editingKey); persistSlot(editingKey); },
+    setEnabled(b) { editBridge().enabled = !!b; syncLink(editingName); writeBridge(); emit('change', editingName); persistName(editingName); },
     // Link-all + bulk ops (splitscreen "across the board").
     isLinkAll: () => linkAll,
-    setLinkAll(b) { linkAll = !!b; profiles.linkAll = linkAll; saveSoon(); if (linkAll) syncLink(editingKey); writeBridge(); emit('mode'); },
+    setLinkAll(b) { linkAll = !!b; profiles.linkAll = linkAll; saveSoon(); if (linkAll) syncLink(editingName); writeBridge(); emit('mode'); },
     applyToAll,
     setEnabledAll,
-    resetCamera: () => resetCamera(editingKey),
-    listPresets: () => listPresets(editingKey),
-    savePreset: (n) => savePreset(n, editingKey),
-    updatePreset: (n) => updatePreset(n, editingKey),
-    deletePreset: (n) => deletePreset(n, editingKey),
-    applyPreset: (p) => applyPreset(p, editingKey),
+    resetCamera: () => resetCamera(editingName),
+    listPresets: () => listPresets(),
+    savePreset: (n) => savePreset(n, editingName),
+    updatePreset: (n) => updatePreset(n, editingName),
+    deletePreset: (n) => deletePreset(n),
+    applyPreset: (p) => applyPreset(p, editingName),
     exportPreset,
-    importFromFile: (f) => importFromFile(f, editingKey),
+    importFromFile: (f) => importFromFile(f, editingName),
     on, off,
     destroy() {
-      clearInterval(_pollT); clearTimeout(_saveT); cancelAnimationFrame(_raf);
+      clearInterval(_pollT); clearInterval(_hbT); clearTimeout(_saveT); clearTimeout(_bcT); cancelAnimationFrame(_raf);
+      try { if (_camCh) _camCh.close(); } catch (e) { /* ignore */ }
       try { if (ss() && ss().offFocusChange) ss().offFocusChange(reconcile); } catch (e) { /* ignore */ }
+      try { if (window.feedBack && window.feedBack.off) window.feedBack.off('splitscreen:panels-changed', onPanelsChanged); } catch (e) { /* ignore */ }
       for (const [el, ev, fn, opts] of domL) { try { el.removeEventListener(ev, fn, opts); } catch (e) { /* ignore */ } }
       domL.length = 0;
       try { window.__camDirUI && window.__camDirUI.destroy && window.__camDirUI.destroy(); } catch (e) { /* ignore */ }

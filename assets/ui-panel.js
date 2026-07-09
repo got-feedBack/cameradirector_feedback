@@ -136,14 +136,28 @@
     panel.innerHTML = '';
     root.style.setProperty('--cd-accent', API.getColor());
 
-    // Player tabs — ONLY in splitscreen (more than one player). Single mode hides them.
+    // Panel selector — ONLY in splitscreen. A horizontally-scrollable strip of
+    // the panels' NAMES (not fixed A–D) so it scales to many panels (incl.
+    // popped-out ones once cross-window aggregation lands). The focused panel is
+    // underlined; the edited panel is highlighted.
     const slots = API.getSlots();
     if (slots.length > 1) {
       const tabs = el('div', 'camdir-tabs');
+      tabs.style.cssText = 'display:flex;gap:4px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px;scrollbar-width:thin;';
+      const editKey = API.getEditingKey();
       slots.forEach((s) => {
-        const tab = el('button', 'camdir-tab' + (s.key === API.getEditingKey() ? ' is-active' : ''));
-        tab.textContent = `${t('player')} ${s.label}`;
+        const tab = el('button', 'camdir-tab' + (s.key === editKey ? ' is-active' : ''));
+        // Remote = a popped-out panel living in another window (steered from here).
+        tab.textContent = s.remote ? (s.label + ' ⤢') : s.label;
+        tab.title = s.remote
+          ? (s.label + ' — ' + ((lang === 'es') ? 'panel emergente (steer desde aquí)' : 'popped-out panel'))
+          : (s.label + (s.focused ? ' — ' + ((lang === 'es') ? 'enfocado' : 'focused') : ''));
         tab.style.setProperty('--tab', s.color);
+        tab.style.cssText += 'white-space:nowrap;flex:0 0 auto;max-width:130px;overflow:hidden;text-overflow:ellipsis;';
+        if (s.remote) { tab.style.fontStyle = 'italic'; tab.style.borderStyle = 'dashed'; }
+        // Focus marker (which panel the player is currently driving) — distinct
+        // from the edit selection so both are visible at once.
+        if (s.focused) tab.style.boxShadow = 'inset 0 -2px 0 0 ' + s.color;
         on(tab, 'click', () => API.setEditingKey(s.key));
         tabs.appendChild(tab);
       });
