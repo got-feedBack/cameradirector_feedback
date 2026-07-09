@@ -136,14 +136,28 @@
     panel.innerHTML = '';
     root.style.setProperty('--cd-accent', API.getColor());
 
-    // Player tabs — ONLY in splitscreen (more than one player). Single mode hides them.
+    // Panel selector — ONLY in splitscreen. A horizontally-scrollable strip of
+    // the panels' NAMES (not fixed A–D) so it scales to many panels (incl.
+    // popped-out ones once cross-window aggregation lands). The focused panel is
+    // underlined; the edited panel is highlighted.
     const slots = API.getSlots();
     if (slots.length > 1) {
       const tabs = el('div', 'camdir-tabs');
+      tabs.style.cssText = 'display:flex;gap:4px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px;scrollbar-width:thin;';
+      const editKey = API.getEditingKey();
       slots.forEach((s) => {
-        const tab = el('button', 'camdir-tab' + (s.key === API.getEditingKey() ? ' is-active' : ''));
-        tab.textContent = `${t('player')} ${s.label}`;
+        const tab = el('button', 'camdir-tab' + (s.key === editKey ? ' is-active' : ''));
+        // Remote = a popped-out panel living in another window (steered from here).
+        tab.textContent = s.remote ? (s.label + ' ⤢') : s.label;
+        tab.title = s.remote
+          ? (s.label + ' — ' + ((lang === 'es') ? 'panel emergente (steer desde aquí)' : 'popped-out panel'))
+          : (s.label + (s.focused ? ' — ' + ((lang === 'es') ? 'enfocado' : 'focused') : ''));
         tab.style.setProperty('--tab', s.color);
+        tab.style.cssText += 'white-space:nowrap;flex:0 0 auto;max-width:130px;overflow:hidden;text-overflow:ellipsis;';
+        if (s.remote) { tab.style.fontStyle = 'italic'; tab.style.borderStyle = 'dashed'; }
+        // Focus marker (which panel the player is currently driving) — distinct
+        // from the edit selection so both are visible at once.
+        if (s.focused) tab.style.boxShadow = 'inset 0 -2px 0 0 ' + s.color;
         on(tab, 'click', () => API.setEditingKey(s.key));
         tabs.appendChild(tab);
       });
@@ -172,6 +186,57 @@
     masterRow.append(masterChk, masterTxt, masterState);
     panel.appendChild(masterRow);
     panel._masterState = masterState;
+
+    // Splitscreen "across the board" controls: Link-all mirrors one camera to
+    // every panel (edit once, applies to all); Apply-to-all is a one-shot copy.
+    if (slots.length > 1) {
+      const linkRow = el('label', 'camdir-master');
+      const linkChk = el('input'); linkChk.type = 'checkbox'; linkChk.checked = API.isLinkAll();
+      on(linkChk, 'change', () => { API.setLinkAll(linkChk.checked); refreshMaster(); syncSliders(); });
+      const linkTxt = el('span', 'camdir-master-txt');
+      linkTxt.textContent = (lang === 'es') ? 'Vincular paneles' : 'Link all panels';
+      linkRow.append(linkChk, linkTxt);
+      panel.appendChild(linkRow);
+
+      const applyRow = el('div', 'camdir-presets-top');
+      const applyBtn = mkBtn('save', (lang === 'es') ? 'Aplicar a todos' : 'Apply to all',
+        () => { API.applyToAll(); syncSliders(); }, false);
+      applyBtn.title = (lang === 'es')
+        ? 'Copiar esta cámara a todos los paneles' : 'Copy this camera to every panel';
+      applyRow.append(applyBtn);
+      panel.appendChild(applyRow);
+    }
+
+    // Profile picker for the SELECTED panel: choose a saved profile to apply it
+    // here. Shows "Custom" after a manual tweak. This is the explicit "pick a
+    // saved profile → apply to this panel" control (the list below also applies
+    // on click, and "Apply to all" pushes the current one to every panel).
+    {
+      const row = el('div', 'camdir-assign-row');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:6px 2px;';
+      const lbl = el('span'); lbl.style.cssText = 'font-size:12px;opacity:.7;';
+      lbl.textContent = (lang === 'es') ? 'Perfil:' : 'Profile:';
+      const sel = el('select', 'camdir-assign-sel');
+      sel.style.cssText = 'flex:1;background:#1a1f2b;color:inherit;border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:4px 6px;font-size:12px;';
+      const cur = (API.getAssignment && API.getAssignment()) || '';
+      const optC = el('option'); optC.value = '';
+      optC.textContent = (lang === 'es') ? '— Personalizado —' : '— Custom —';
+      sel.appendChild(optC);
+      for (const p of API.listPresets()) {
+        const o = el('option'); o.value = p.name; o.textContent = p.name;
+        if (p.name === cur) o.selected = true;
+        sel.appendChild(o);
+      }
+      if (!cur) optC.selected = true;
+      on(sel, 'change', () => {
+        const name = sel.value;
+        if (!name) return;                       // "Custom" is informational — no-op
+        const p = API.listPresets().find((x) => x.name === name);
+        if (p) { API.applyPreset(p); syncSliders(); }
+      });
+      row.append(lbl, sel);
+      panel.appendChild(row);
+    }
 
     // Axis sliders.
     const grid = el('div', 'camdir-grid');
@@ -246,6 +311,7 @@
     const list = panel._presetList;
     if (!list) return;
     const arr = API.listPresets();
+    const assignedName = (API.getAssignment && API.getAssignment()) || null;
     list.innerHTML = '';
     if (!arr.length) {
       const empty = el('div', 'camdir-empty'); empty.textContent = t('noPresets');
@@ -268,6 +334,13 @@
       const del = el('button', 'camdir-icon-btn camdir-danger'); del.innerHTML = svg('close', 14); del.title = t('del');
       on(del, 'click', () => API.deletePreset(p.name));
       acts.append(play, dl, del);
+
+      // Highlight the profile the current panel is on, tinted in its own color.
+      if (assignedName && p.name === assignedName) {
+        item.style.outline = `2px solid ${col}`;
+        item.style.outlineOffset = '-2px';
+        item.title = (lang === 'es') ? 'Perfil activo en este panel' : 'Active profile on this panel';
+      }
 
       // Inverted order ONLY here (the preset row renders under a reversed rule):
       // appending acts-then-name yields name-left / icons-right visually.
@@ -418,7 +491,7 @@
   // ── Brain subscriptions ─────────────────────────────────────────────────────
   const onChange = (k) => { if (k === API.getEditingKey()) syncSliders(); };
   const onMode = () => { buildPanel(); };
-  const onPresets = (k) => { if (k === API.getEditingKey()) renderPresets(); };
+  const onPresets = () => renderPresets();   // shared library — always re-render
   API.on('change', onChange);
   API.on('mode', onMode);
   API.on('presets', onPresets);

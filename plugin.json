@@ -1,7 +1,7 @@
 {
   "id": "camera_director",
   "name": "Camera Director",
-  "version": "3.1.3",
+  "version": "3.4.0",
   "author": "Slopsmith community",
   "description": "Floating control panel to author, save and share the 3D Highway camera (orbit, pan, zoom, tilt, height) — works with the guitar, drum and piano/keys 3D highways. Split-screen per-player cameras, preset library, bilingual EN/ES. Brain (screen.js) decoupled from UI (assets/ui-panel.js).",
   "homepage": "https://github.com/nimuart/cameradirector_feedback",
