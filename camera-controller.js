@@ -428,6 +428,11 @@
   function camChannel() {
     if (!_camCh && typeof BroadcastChannel === 'function') {
       try {
+        // SHARED channel: this is splitscreen's own BroadcastChannel — we ride it
+        // to read its `closed`/`docked` follower-lifecycle messages and to reach
+        // follower windows. Coexistence relies on each side ignoring the other's
+        // message `type`s. The name must stay in sync with splitscreen (and the
+        // follower's CH_NAME above); if splitscreen renames it, steering breaks.
         _camCh = new BroadcastChannel('slopsmith-ss');
         _camCh.addEventListener('message', (ev) => {
           const m = ev.data || {};
