@@ -38,10 +38,16 @@
  *    clampAxis(k,v) · fmtAxis(k,v) · parseAxis(k,text)
  *    isSplit() · getMode() · getSlots() · getEditingKey() · setEditingKey(k)
  *    getColor(k) · getAxis(k) · setAxis(k,v) · isEnabled() · setEnabled(b)
+ *    isLinkAll() · setLinkAll(b) · applyToAll() · setEnabledAll(b) · getAssignment(k)
  *    resetCamera() · listPresets() · savePreset(n) · updatePreset(n)
  *    deletePreset(n) · applyPreset(p) · exportPreset(p) · importFromFile(f)
- *    on(ev,fn) · off(ev,fn)   events: 'change'(slotKey) · 'mode' · 'presets'(slotKey)
+ *    on(ev,fn) · off(ev,fn)   events: 'change'(slotKey) · 'mode' · 'presets'
  *    destroy()
+ *
+ *  Profiles are a single SHARED, named library (usable on any panel), with a
+ *  per-panel `assignment` (which profile a panel is on, or null = Custom).
+ *  Editing follows the focused splitscreen panel. Persisted at LS_STORE (v3),
+ *  migrated from the v2 per-slot model.
  *
  *  Idempotent: re-injecting this script tears down the previous brain + UI.
  * ==========================================================================*/
@@ -50,11 +56,12 @@
 
   const PLUGIN_ID = 'camera_director';
   const ASSET_BASE = `/api/plugins/${PLUGIN_ID}/assets`;
-  const VERSION = '3.2.0';
+  const VERSION = '3.3.2';
 
-  const LS_PROFILES = 'camera_director.profiles.v2';
-  const LS_LIVE = 'camera_director.live';        // legacy v1 (migrated → slot A)
-  const LS_PRESETS = 'camera_director.presets';  // legacy v1 (migrated → slot A)
+  const LS_STORE = 'camera_director.profiles.v3';  // { live, library, assignments, linkAll, active }
+  const LS_PROFILES = 'camera_director.profiles.v2';  // legacy per-slot model (migrated → v3)
+  const LS_LIVE = 'camera_director.live';        // legacy v1 (migrated → slot A live)
+  const LS_PRESETS = 'camera_director.presets';  // legacy v1 (migrated → shared library)
   const EXPORT_KIND = 'slopsmith.camera-director.preset';
   const EXPORT_VERSION = 1;
 
@@ -101,35 +108,63 @@
     return clampAxis(key, n);
   }
 
-  // ── Profiles (per-slot live camera + presets), persisted ────────────────────
-  function loadProfiles() {
+  // ── Store (v3): per-slot live cameras + a SHARED named-profile library +
+  //    per-panel assignments (which profile each panel is on). Persisted. ──────
+  function profileCam(c) { const o = {}; for (const [a] of AXES) o[a] = clampAxis(a, (c && Number(c[a])) || DEFAULTS[a]); return o; }
+  function loadStore() {
+    const out = { active: 'A', live: {}, library: [], assignments: {}, linkAll: false, _v: 3 };
+    for (const k of SLOT_KEYS) { out.live[k] = Object.assign({}, DEFAULTS); out.assignments[k] = null; }
+    // Prefer v3.
     let s = null;
-    try { s = JSON.parse(localStorage.getItem(LS_PROFILES) || 'null'); } catch (e) { /* corrupt */ }
-    if (!(s && s.players)) s = { active: 'A', players: {}, _migrated: false };
-    for (const k of SLOT_KEYS) {
-      const p = s.players[k] || {};
-      p.live = Object.assign({}, DEFAULTS, p.live || {});
-      if (!Array.isArray(p.presets)) p.presets = [];
-      s.players[k] = p;
+    try { s = JSON.parse(localStorage.getItem(LS_STORE) || 'null'); } catch (e) { /* corrupt */ }
+    if (s && s.live && Array.isArray(s.library)) {
+      out.active = SLOT_KEYS.includes(s.active) ? s.active : 'A';
+      out.linkAll = !!s.linkAll;
+      for (const k of SLOT_KEYS) {
+        out.live[k] = Object.assign({}, DEFAULTS, s.live[k]);
+        out.assignments[k] = (s.assignments && s.assignments[k]) || null;
+      }
+      out.library = s.library.filter((p) => p && p.name && p.cam)
+        .map((p) => ({ name: p.name, cam: profileCam(p.cam), color: p.color || SLOT_COLORS.A, savedAt: p.savedAt || '' }));
+      return out;
     }
-    if (!s._migrated) {
-      try { const l = JSON.parse(localStorage.getItem(LS_LIVE) || 'null'); if (l) s.players.A.live = Object.assign({}, DEFAULTS, l); } catch (e) { /* ignore */ }
-      try { const pr = JSON.parse(localStorage.getItem(LS_PRESETS) || 'null'); if (Array.isArray(pr) && pr.length) s.players.A.presets = pr.concat(s.players.A.presets); } catch (e) { /* ignore */ }
-      s._migrated = true;
+    // Migrate v2 (per-slot live + per-slot presets) → v3.
+    let v2 = null;
+    try { v2 = JSON.parse(localStorage.getItem(LS_PROFILES) || 'null'); } catch (e) { /* corrupt */ }
+    if (v2 && v2.players) {
+      out.active = SLOT_KEYS.includes(v2.active) ? v2.active : 'A';
+      out.linkAll = !!v2.linkAll;
+      const byName = new Map();
+      for (const k of SLOT_KEYS) {
+        const p = v2.players[k] || {};
+        out.live[k] = Object.assign({}, DEFAULTS, p.live || {});
+        if (Array.isArray(p.presets)) for (const pr of p.presets) {
+          if (pr && pr.name && pr.cam && !byName.has(pr.name)) {
+            byName.set(pr.name, { name: pr.name, cam: profileCam(pr.cam), color: pr.color || SLOT_COLORS[k], savedAt: pr.savedAt || '' });
+          }
+        }
+      }
+      out.library = [...byName.values()];
+      return out;
     }
-    if (!SLOT_KEYS.includes(s.active)) s.active = 'A';
-    return s;
+    // Migrate v1 legacy (single live + flat presets) → slot A + shared library.
+    try { const l = JSON.parse(localStorage.getItem(LS_LIVE) || 'null'); if (l) out.live.A = Object.assign({}, DEFAULTS, l); } catch (e) { /* ignore */ }
+    try {
+      const pr = JSON.parse(localStorage.getItem(LS_PRESETS) || 'null');
+      if (Array.isArray(pr)) for (const p of pr) if (p && p.name && p.cam) out.library.push({ name: p.name, cam: profileCam(p.cam), color: p.color || SLOT_COLORS.A, savedAt: p.savedAt || '' });
+    } catch (e) { /* ignore */ }
+    return out;
   }
-  const profiles = loadProfiles();
+  const profiles = loadStore();
   let _saveT = 0;
-  function saveProfiles() { try { localStorage.setItem(LS_PROFILES, JSON.stringify(profiles)); } catch (e) { /* quota */ } }
+  function saveProfiles() { try { localStorage.setItem(LS_STORE, JSON.stringify(profiles)); } catch (e) { /* quota */ } }
   function saveSoon() { clearTimeout(_saveT); _saveT = setTimeout(saveProfiles, 250); }
 
   // Live bridge object per slot — mutated IN PLACE so the renderer keeps reading
   // the same reference frame to frame.
   const bridges = {};
-  for (const k of SLOT_KEYS) bridges[k] = Object.assign({}, DEFAULTS, profiles.players[k].live);
-  function persistSlot(k) { profiles.players[k].live = stripLive(bridges[k]); saveSoon(); }
+  for (const k of SLOT_KEYS) bridges[k] = Object.assign({}, DEFAULTS, profiles.live[k]);
+  function persistSlot(k) { profiles.live[k] = stripLive(bridges[k]); saveSoon(); }
 
   // ── Splitscreen awareness ───────────────────────────────────────────────────
   function ss() { return window.slopsmithSplitscreen; }
@@ -209,10 +244,11 @@
       const d = bridges[k];
       d.enabled = src.enabled;
       for (const [a] of AXES) d[a] = src[a];
+      profiles.assignments[k] = profiles.assignments[srcK];
       persistSlot(k); emit('change', k);
     }
   }
-  // One-shot: copy the editing panel's camera (+ enabled) to every panel.
+  // One-shot: copy the editing panel's camera (+ enabled + assignment) to every panel.
   function applyToAll() {
     if (!isSplit()) return;
     const src = bridges[editingKey];
@@ -221,9 +257,10 @@
       const d = bridges[k];
       d.enabled = src.enabled;
       for (const [a] of AXES) d[a] = src[a];
+      profiles.assignments[k] = profiles.assignments[editingKey];
       persistSlot(k); emit('change', k);
     }
-    writeBridge();
+    writeBridge(); emit('mode');
   }
   // Enable/disable every panel at once.
   function setEnabledAll(b) {
@@ -256,30 +293,42 @@
     _raf = requestAnimationFrame(step);
   }
 
-  // ── Presets (per slot) ──────────────────────────────────────────────────────
-  function listPresets(k) { return profiles.players[k || editingKey].presets || []; }
-  function writePresets(k, arr) { profiles.players[k].presets = arr; saveProfiles(); emit('presets', k); }
+  // ── Shared named-profile library (usable on ANY panel) + per-panel assign ────
+  // Profiles are a single global list (not per-slot): save one on Player 1, apply
+  // it on Player 2. `profiles.assignments[k]` tracks which profile a panel is on
+  // (or null = Custom, after a manual tweak).
+  function listPresets() { return profiles.library; }
   function currentCam(k) { const cam = {}; for (const [a] of AXES) cam[a] = clampAxis(a, Number(bridges[k][a]) || 0); return cam; }
   function savePreset(name, k) {
     k = k || editingKey; name = String(name || '').trim(); if (!name) return;
-    const arr = listPresets(k).filter((p) => p.name !== name);
-    arr.push({ name, cam: currentCam(k), color: SLOT_COLORS[k], savedAt: new Date().toISOString() });
-    writePresets(k, arr);
+    profiles.library = profiles.library.filter((p) => p.name !== name);
+    profiles.library.push({ name, cam: currentCam(k), color: SLOT_COLORS[k], savedAt: new Date().toISOString() });
+    profiles.assignments[k] = name;   // saving puts this panel ON the new profile
+    saveProfiles(); emit('presets'); emit('mode');
   }
   function updatePreset(name, k) {
     k = k || editingKey;
-    const arr = listPresets(k); const i = arr.findIndex((p) => p.name === name); if (i < 0) return;
-    arr[i] = { name, cam: currentCam(k), color: arr[i].color || SLOT_COLORS[k], savedAt: new Date().toISOString() };
-    writePresets(k, arr);
+    const i = profiles.library.findIndex((p) => p.name === name); if (i < 0) return;
+    profiles.library[i] = { name, cam: currentCam(k), color: profiles.library[i].color || SLOT_COLORS[k], savedAt: new Date().toISOString() };
+    profiles.assignments[k] = name;
+    saveProfiles(); emit('presets'); emit('mode');
   }
-  function deletePreset(name, k) { k = k || editingKey; writePresets(k, listPresets(k).filter((p) => p.name !== name)); }
+  function deletePreset(name) {
+    profiles.library = profiles.library.filter((p) => p.name !== name);
+    for (const k of SLOT_KEYS) if (profiles.assignments[k] === name) profiles.assignments[k] = null;
+    saveProfiles(); emit('presets'); emit('mode');
+  }
   function applyPreset(preset, k) {
     k = k || editingKey; if (!preset || !preset.cam) return;
     bridges[k].enabled = true;
+    profiles.assignments[k] = preset.name || null;   // set before tween so syncLink mirrors it
     const target = {}; for (const [a] of AXES) target[a] = clampAxis(a, Number(preset.cam[a]) || 0);
-    tween(k, target); emit('change', k); persistSlot(k);
+    tween(k, target); syncLink(k); emit('change', k); emit('mode'); persistSlot(k);
   }
-  function resetCamera(k) { k = k || editingKey; const target = {}; for (const [a] of AXES) target[a] = DEFAULTS[a]; tween(k, target); }
+  function resetCamera(k) {
+    k = k || editingKey; profiles.assignments[k] = null;
+    const target = {}; for (const [a] of AXES) target[a] = DEFAULTS[a]; tween(k, target); emit('mode');
+  }
 
   function exportPreset(payload) {
     let body = payload;
@@ -299,11 +348,12 @@
       if (!data || data.kind !== EXPORT_KIND) throw 0;
       const inc = Array.isArray(data.presets) ? data.presets : (data.preset ? [data.preset] : []);
       if (!inc.length) throw 0;
-      const byName = new Map(listPresets(k).map((p) => [p.name, p]));
+      const byName = new Map(profiles.library.map((p) => [p.name, p]));
       for (const p of inc) {
         if (p && p.name && p.cam) byName.set(p.name, { name: p.name, cam: p.cam, color: p.color || SLOT_COLORS[k], savedAt: p.savedAt || new Date().toISOString() });
       }
-      writePresets(k, [...byName.values()]);
+      profiles.library = [...byName.values()];
+      saveProfiles(); emit('presets');
       if (inc.length === 1) applyPreset(inc[0], k);
       return true;
     } catch (e) { return false; }
@@ -337,7 +387,7 @@
       b.yaw = clampAxis('yaw', (Number(b.yaw) || 0) + dx * 0.005);
       b.pitch = clampAxis('pitch', (Number(b.pitch) || 0) - dy * 0.6);
     }
-    syncLink(drag.k); emit('change', drag.k); saveSoon();
+    profiles.assignments[drag.k] = null; syncLink(drag.k); emit('change', drag.k); saveSoon();
   });
   addL(window, 'pointerup', () => { if (drag) { persistSlot(drag.k); drag = null; } });
   addL(window, 'wheel', (e) => {
@@ -347,7 +397,7 @@
     e.preventDefault();
     const b = bridges[k];
     b.distMul = clampAxis('distMul', (Number(b.distMul) || 1) * (1 + (e.deltaY > 0 ? 0.06 : -0.06)));
-    syncLink(k); emit('change', k); persistSlot(k);
+    profiles.assignments[k] = null; syncLink(k); emit('change', k); persistSlot(k);
   }, { passive: false });
 
   // ── Mode / focus reconciliation ─────────────────────────────────────────────
@@ -357,6 +407,14 @@
     const sig = modeSig();
     if (sig === _lastSig) return;
     _lastSig = sig;
+    // Editing follows the FOCUSED panel: clicking a splitscreen panel switches
+    // the Camera Director's target (highlighted tab + profile dropdown + sliders)
+    // to that panel. Tab clicks don't change focus, so sig is unchanged then and
+    // this early-returns — the tab selection is preserved until focus moves.
+    if (isSplit()) {
+      const fk = focusedSlot();
+      if (activeSlots().includes(fk)) { editingKey = fk; profiles.active = fk; }
+    }
     if (!activeSlots().includes(editingKey)) editingKey = activeSlots()[0] || 'A';
     writeBridge();
     emit('mode');
@@ -376,7 +434,8 @@
     setEditingKey(k) { if (activeSlots().includes(k)) { editingKey = k; profiles.active = k; saveSoon(); emit('mode'); } },
     getColor: (k) => SLOT_COLORS[k || editingKey],
     getAxis: (key) => Number(editBridge()[key]) || 0,
-    setAxis(key, val) { editBridge()[key] = clampAxis(key, val); syncLink(editingKey); emit('change', editingKey); persistSlot(editingKey); },
+    setAxis(key, val) { editBridge()[key] = clampAxis(key, val); profiles.assignments[editingKey] = null; syncLink(editingKey); emit('change', editingKey); persistSlot(editingKey); },
+    getAssignment: (k) => profiles.assignments[k || editingKey] || null,
     isEnabled: () => !!editBridge().enabled,
     setEnabled(b) { editBridge().enabled = !!b; syncLink(editingKey); writeBridge(); emit('change', editingKey); persistSlot(editingKey); },
     // Link-all + bulk ops (splitscreen "across the board").

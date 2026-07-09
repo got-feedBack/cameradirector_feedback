@@ -193,6 +193,37 @@
       panel.appendChild(applyRow);
     }
 
+    // Profile picker for the SELECTED panel: choose a saved profile to apply it
+    // here. Shows "Custom" after a manual tweak. This is the explicit "pick a
+    // saved profile → apply to this panel" control (the list below also applies
+    // on click, and "Apply to all" pushes the current one to every panel).
+    {
+      const row = el('div', 'camdir-assign-row');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:6px 2px;';
+      const lbl = el('span'); lbl.style.cssText = 'font-size:12px;opacity:.7;';
+      lbl.textContent = (lang === 'es') ? 'Perfil:' : 'Profile:';
+      const sel = el('select', 'camdir-assign-sel');
+      sel.style.cssText = 'flex:1;background:#1a1f2b;color:inherit;border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:4px 6px;font-size:12px;';
+      const cur = (API.getAssignment && API.getAssignment()) || '';
+      const optC = el('option'); optC.value = '';
+      optC.textContent = (lang === 'es') ? '— Personalizado —' : '— Custom —';
+      sel.appendChild(optC);
+      for (const p of API.listPresets()) {
+        const o = el('option'); o.value = p.name; o.textContent = p.name;
+        if (p.name === cur) o.selected = true;
+        sel.appendChild(o);
+      }
+      if (!cur) optC.selected = true;
+      on(sel, 'change', () => {
+        const name = sel.value;
+        if (!name) return;                       // "Custom" is informational — no-op
+        const p = API.listPresets().find((x) => x.name === name);
+        if (p) { API.applyPreset(p); syncSliders(); }
+      });
+      row.append(lbl, sel);
+      panel.appendChild(row);
+    }
+
     // Axis sliders.
     const grid = el('div', 'camdir-grid');
     for (const [key, min, max, step] of AXES) {
@@ -266,6 +297,7 @@
     const list = panel._presetList;
     if (!list) return;
     const arr = API.listPresets();
+    const assignedName = (API.getAssignment && API.getAssignment()) || null;
     list.innerHTML = '';
     if (!arr.length) {
       const empty = el('div', 'camdir-empty'); empty.textContent = t('noPresets');
@@ -288,6 +320,13 @@
       const del = el('button', 'camdir-icon-btn camdir-danger'); del.innerHTML = svg('close', 14); del.title = t('del');
       on(del, 'click', () => API.deletePreset(p.name));
       acts.append(play, dl, del);
+
+      // Highlight the profile the current panel is on, tinted in its own color.
+      if (assignedName && p.name === assignedName) {
+        item.style.outline = `2px solid ${col}`;
+        item.style.outlineOffset = '-2px';
+        item.title = (lang === 'es') ? 'Perfil activo en este panel' : 'Active profile on this panel';
+      }
 
       // Inverted order ONLY here (the preset row renders under a reversed rule):
       // appending acts-then-name yields name-left / icons-right visually.
@@ -438,7 +477,7 @@
   // ── Brain subscriptions ─────────────────────────────────────────────────────
   const onChange = (k) => { if (k === API.getEditingKey()) syncSliders(); };
   const onMode = () => { buildPanel(); };
-  const onPresets = (k) => { if (k === API.getEditingKey()) renderPresets(); };
+  const onPresets = () => renderPresets();   // shared library — always re-render
   API.on('change', onChange);
   API.on('mode', onMode);
   API.on('presets', onPresets);
