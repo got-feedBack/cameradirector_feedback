@@ -173,6 +173,26 @@
     panel.appendChild(masterRow);
     panel._masterState = masterState;
 
+    // Splitscreen "across the board" controls: Link-all mirrors one camera to
+    // every panel (edit once, applies to all); Apply-to-all is a one-shot copy.
+    if (slots.length > 1) {
+      const linkRow = el('label', 'camdir-master');
+      const linkChk = el('input'); linkChk.type = 'checkbox'; linkChk.checked = API.isLinkAll();
+      on(linkChk, 'change', () => { API.setLinkAll(linkChk.checked); refreshMaster(); syncSliders(); });
+      const linkTxt = el('span', 'camdir-master-txt');
+      linkTxt.textContent = (lang === 'es') ? 'Vincular paneles' : 'Link all panels';
+      linkRow.append(linkChk, linkTxt);
+      panel.appendChild(linkRow);
+
+      const applyRow = el('div', 'camdir-presets-top');
+      const applyBtn = mkBtn('save', (lang === 'es') ? 'Aplicar a todos' : 'Apply to all',
+        () => { API.applyToAll(); syncSliders(); }, false);
+      applyBtn.title = (lang === 'es')
+        ? 'Copiar esta cámara a todos los paneles' : 'Copy this camera to every panel';
+      applyRow.append(applyBtn);
+      panel.appendChild(applyRow);
+    }
+
     // Axis sliders.
     const grid = el('div', 'camdir-grid');
     for (const [key, min, max, step] of AXES) {

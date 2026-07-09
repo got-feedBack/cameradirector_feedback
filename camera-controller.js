@@ -17,19 +17,20 @@
  *
  *    window.__h3dCamCtlPanels = { 0: camA, 1: camB, ... } | null
  *        Per-splitscreen-panel cameras. NULL when not split. A splitscreen-aware
- *        renderer should prefer this, falling back to the global:
+ *        renderer prefers this, falling back to the global:
  *
  *            let fc = window.__h3dCamCtl;
- *            const ss = window.slopsmithSplitscreen;
+ *            const ss = window.feedBackSplitscreen || window.slopsmithSplitscreen;
  *            if (ss && ss.isActive()) {
  *              const i = ss.panelIndexFor(highwayCanvas);
  *              const m = window.__h3dCamCtlPanels;
  *              if (i != null && m && m[i]) fc = m[i];
  *            }
  *
- *        See DEVELOPERS.md for the exact ~6-line renderer patch. Until the
- *        renderer reads this, both split panels share the focused camera; the
- *        plugin already keeps both cameras live so it "just works" once patched.
+ *        The bundled highways (highway_3d / drum_highway_3d / keys_highway_3d)
+ *        now consume this per-panel map (see DEVELOPERS.md), so each split panel
+ *        renders its OWN camera. Renderers that don't read it fall back to the
+ *        global (focused) camera.
  *
  *  API: window.__camDir  (the UI is the only consumer)
  *  --------------------------------------------------
@@ -49,7 +50,7 @@
 
   const PLUGIN_ID = 'camera_director';
   const ASSET_BASE = `/api/plugins/${PLUGIN_ID}/assets`;
-  const VERSION = '3.1.3';
+  const VERSION = '3.2.0';
 
   const LS_PROFILES = 'camera_director.profiles.v2';
   const LS_LIVE = 'camera_director.live';        // legacy v1 (migrated → slot A)
@@ -153,6 +154,21 @@
     try { const i = ss().panelIndexFor(canvas); if (i != null && i >= 0 && i < SLOT_KEYS.length) return SLOT_KEYS[i]; } catch (e) { /* ignore */ }
     return null;
   }
+  // Resolve a panel slot from a POINT (clientX/Y). The 3D highways mount a 2D
+  // overlay canvas ON TOP of the WebGL canvas; that overlay is the pointer target
+  // and resolves to null via panelIndexFor — which is why click-drag-on-canvas
+  // targeted no panel in splitscreen. Hit-test the panels' WebGL canvas rects
+  // instead so the drag lands on whichever panel the pointer is over.
+  function slotForPoint(x, y) {
+    if (!isSplit()) return 'A';
+    const arr = panelCanvasByIndex();
+    for (let i = 0; i < arr.length; i++) {
+      const c = arr[i]; if (!c) continue;
+      const r = c.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return SLOT_KEYS[i];
+    }
+    return null;
+  }
   function focusedSlot() {
     if (!isSplit()) return 'A';
     const arr = panelCanvasByIndex();
@@ -181,6 +197,40 @@
   let editingKey = activeSlots().includes(profiles.active) ? profiles.active : 'A';
   function editBridge() { return bridges[editingKey]; }
 
+  // ── Link-all: one camera shared across every panel ──────────────────────────
+  // When on, editing/dragging any panel mirrors its camera (all axes + enabled)
+  // to every active panel, so you tweak once and it applies across the board.
+  let linkAll = !!profiles.linkAll;
+  function syncLink(srcK) {
+    if (!linkAll || !isSplit()) return;
+    const src = bridges[srcK];
+    for (const k of activeSlots()) {
+      if (k === srcK) continue;
+      const d = bridges[k];
+      d.enabled = src.enabled;
+      for (const [a] of AXES) d[a] = src[a];
+      persistSlot(k); emit('change', k);
+    }
+  }
+  // One-shot: copy the editing panel's camera (+ enabled) to every panel.
+  function applyToAll() {
+    if (!isSplit()) return;
+    const src = bridges[editingKey];
+    for (const k of activeSlots()) {
+      if (k === editingKey) continue;
+      const d = bridges[k];
+      d.enabled = src.enabled;
+      for (const [a] of AXES) d[a] = src[a];
+      persistSlot(k); emit('change', k);
+    }
+    writeBridge();
+  }
+  // Enable/disable every panel at once.
+  function setEnabledAll(b) {
+    for (const k of activeSlots()) { bridges[k].enabled = !!b; persistSlot(k); emit('change', k); }
+    writeBridge();
+  }
+
   // ── Tiny event bus ──────────────────────────────────────────────────────────
   const subs = {};
   function on(ev, fn) { (subs[ev] || (subs[ev] = [])).push(fn); }
@@ -199,6 +249,7 @@
       const p = Math.min(1, (now - start) / (dur * 1000));
       const e = ease(p);
       for (const [a] of AXES) { if (a in target) b[a] = from[a] + (target[a] - from[a]) * e; }
+      syncLink(k);
       emit('change', k);
       if (p < 1) _raf = requestAnimationFrame(step); else persistSlot(k);
     };
@@ -266,7 +317,7 @@
   let drag = null;
   addL(window, 'pointerdown', (e) => {
     if (overUI(e) || !isCanvas(e.target)) return;
-    const k = slotForCanvas(e.target);
+    const k = slotForPoint(e.clientX, e.clientY);
     if (!k || !bridges[k].enabled) return;
     drag = { k, x: e.clientX, y: e.clientY };
   });
@@ -286,17 +337,17 @@
       b.yaw = clampAxis('yaw', (Number(b.yaw) || 0) + dx * 0.005);
       b.pitch = clampAxis('pitch', (Number(b.pitch) || 0) - dy * 0.6);
     }
-    emit('change', drag.k); saveSoon();
+    syncLink(drag.k); emit('change', drag.k); saveSoon();
   });
   addL(window, 'pointerup', () => { if (drag) { persistSlot(drag.k); drag = null; } });
   addL(window, 'wheel', (e) => {
     if (overUI(e) || !isCanvas(e.target)) return;
-    const k = slotForCanvas(e.target);
+    const k = slotForPoint(e.clientX, e.clientY);
     if (!k || !bridges[k].enabled) return;
     e.preventDefault();
     const b = bridges[k];
     b.distMul = clampAxis('distMul', (Number(b.distMul) || 1) * (1 + (e.deltaY > 0 ? 0.06 : -0.06)));
-    emit('change', k); persistSlot(k);
+    syncLink(k); emit('change', k); persistSlot(k);
   }, { passive: false });
 
   // ── Mode / focus reconciliation ─────────────────────────────────────────────
@@ -325,9 +376,14 @@
     setEditingKey(k) { if (activeSlots().includes(k)) { editingKey = k; profiles.active = k; saveSoon(); emit('mode'); } },
     getColor: (k) => SLOT_COLORS[k || editingKey],
     getAxis: (key) => Number(editBridge()[key]) || 0,
-    setAxis(key, val) { editBridge()[key] = clampAxis(key, val); emit('change', editingKey); persistSlot(editingKey); },
+    setAxis(key, val) { editBridge()[key] = clampAxis(key, val); syncLink(editingKey); emit('change', editingKey); persistSlot(editingKey); },
     isEnabled: () => !!editBridge().enabled,
-    setEnabled(b) { editBridge().enabled = !!b; writeBridge(); emit('change', editingKey); persistSlot(editingKey); },
+    setEnabled(b) { editBridge().enabled = !!b; syncLink(editingKey); writeBridge(); emit('change', editingKey); persistSlot(editingKey); },
+    // Link-all + bulk ops (splitscreen "across the board").
+    isLinkAll: () => linkAll,
+    setLinkAll(b) { linkAll = !!b; profiles.linkAll = linkAll; saveSoon(); if (linkAll) syncLink(editingKey); writeBridge(); emit('mode'); },
+    applyToAll,
+    setEnabledAll,
     resetCamera: () => resetCamera(editingKey),
     listPresets: () => listPresets(editingKey),
     savePreset: (n) => savePreset(n, editingKey),
