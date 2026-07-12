@@ -132,6 +132,52 @@
   const valLabels = {};
 
   // ── Panel build ───────────────────────────────────────────────────────────────
+  // ── Detachable pane ─────────────────────────────────────────────────────────
+  //
+  // Register THIS panel as a pane and it can be popped out into its own window and
+  // left there — across song switches, on a second monitor, minimized to the tray.
+  // No longer an overlay you keep dismissing to see the highway.
+  //
+  // The host MOVES this element into the pane window. Not a copy of it, not a
+  // reimplementation — this node, listeners and closures intact. So everything
+  // comes along: the tabs, the sliders, the preset library, the import/export, the
+  // language toggle, our CSS. It still talks to the brain in the main window, and
+  // the brain still owns the clamps, the store and the bridge globals. Nothing in
+  // this plugin needs to know it moved.
+  //
+  // buildPanel() clears and rebuilds the panel on every 'mode' change, which takes
+  // the chip with it — so re-attach each time. attachChip() allows one live
+  // attachment per pane, hence the detach first; it then reconciles against the
+  // pane's real state, so a panel rebuilt while popped out stays correctly hidden
+  // with its stub in place.
+  const PANE_ID = 'camera_director';
+  let paneChipDetach = null;
+  let paneRegistered = false;
+
+  function attachPaneChip(tools) {
+    const panes = window.feedBack && window.feedBack.panes;
+    // No panes API (an older host) — no chip, and the panel behaves as it always has.
+    if (!panes || typeof panes.register !== 'function') return;
+
+    if (!paneRegistered) {
+      paneRegistered = true;
+      panes.register({
+        id: PANE_ID,
+        title: 'Camera Director',
+        icon: '🎥',
+        // Resolved when the pane opens, not now — `panel` is a stable node, but
+        // asking for it late is what lets a plugin rebuild or lazily create it.
+        element: () => panel,
+        width: 300,
+        height: 520,
+      });
+    }
+
+    if (paneChipDetach) { try { paneChipDetach(); } catch (e) { /* already gone */ } paneChipDetach = null; }
+    try { paneChipDetach = panes.attachChip(panel, PANE_ID, { header: tools }); }
+    catch (e) { console.warn('[camera_director] pop-out chip unavailable', e); }
+  }
+
   function buildPanel() {
     panel.innerHTML = '';
     root.style.setProperty('--cd-accent', API.getColor());
@@ -176,6 +222,15 @@
     tools.append(langBtn, closeBtn);
     head.append(title, tools);
     panel.appendChild(head);
+    // The host's pop-out chip goes in the header's tool cluster. Clicking it moves
+    // the axis controls into their own window and hides this panel, leaving the
+    // host's "bring it back" stub in its place — so the panel stops being an
+    // overlay you have to keep dismissing to see the highway. The host owns the
+    // chip, the hiding and the stub; we only say where the chip lives.
+    // buildPanel() re-runs on every 'mode' change, so this must be idempotent —
+    // attachChip() refuses a second attach for the same pane, and the host's own
+    // open/closed reconciliation re-hides the panel if the pane is already out.
+    attachPaneChip(tools);
 
     // Master switch.
     const masterRow = el('label', 'camdir-master');
@@ -519,6 +574,10 @@
         } catch (e) { /* ignore */ }
       }
       closePop();
+      // Detach the chip before the panel goes: it also un-hides the panel and
+      // drops the "popped out" stub, so a re-injected plugin doesn't leave an
+      // orphaned stub pointing at DOM that no longer exists.
+      if (paneChipDetach) { try { paneChipDetach(); } catch (e) { /* ignore */ } paneChipDetach = null; }
       for (const [e2, ev, fn, opts] of L) { try { e2.removeEventListener(ev, fn, opts); } catch (e) { /* ignore */ } }
       L.length = 0;
       launchRow.remove();
