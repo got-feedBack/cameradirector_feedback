@@ -160,7 +160,10 @@
     if (!panes || typeof panes.register !== 'function') return;
 
     if (!paneRegistered) {
-      paneRegistered = true;
+      // Flag AFTER the call, not before. register() throws on a bad spec, and a
+      // flag set up front would latch on the failure — the pane would then be
+      // permanently unregistered, and every later attempt would skip the retry
+      // that might have worked.
       panes.register({
         id: PANE_ID,
         title: 'Camera Director',
@@ -171,6 +174,7 @@
         width: 300,
         height: 520,
       });
+      paneRegistered = true;
     }
 
     if (paneChipDetach) { try { paneChipDetach(); } catch (e) { /* already gone */ } paneChipDetach = null; }
