@@ -150,7 +150,9 @@
   // attachment per pane, hence the detach first; it then reconciles against the
   // pane's real state, so a panel rebuilt while popped out stays correctly hidden
   // with its stub in place.
-  const PANE_ID = 'camera_director';
+  // Derived, never re-typed: a drifting pane id would break registration and the
+  // chip while every other use of the id (assets, storage keys) kept working.
+  const PANE_ID = PLUGIN_ID;
   let paneChipDetach = null;
   let paneRegistered = false;
 
@@ -448,11 +450,18 @@
   // Dismiss-on-outside-click, in the window the user is actually clicking in.
   function dismissPopOnOutsideClick() {
     const w = panelWin();
+    // Capture the popover this call is for. The timer below is deferred a tick, and
+    // in that tick the user can close this popover and open another (click one value,
+    // then another). Without this check the stale timer would arm a listener for the
+    // DEAD popover and overwrite _popDismiss with its own unbind — orphaning the live
+    // popover's listener and leaving the wrong one tracked. Arm only if the popover
+    // we were called for is still the current one.
+    const mine = _pop;
     setTimeout(() => {
-      if (!_pop) return;   // already closed before we could arm
+      if (!_pop || _pop !== mine) return;
       const onDoc = (e) => {
-        // Self-remove whenever the popover is gone, however it went — not only when
-        // this listener is the one that closed it.
+        // Self-close whenever the popover is gone, however it went — not only when
+        // this listener is the one that noticed.
         if (!_pop || !_pop.contains(e.target)) closePop();
       };
       w.addEventListener('pointerdown', onDoc, true);
