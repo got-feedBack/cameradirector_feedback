@@ -160,21 +160,25 @@
     if (!panes || typeof panes.register !== 'function') return;
 
     if (!paneRegistered) {
-      // Flag AFTER the call, not before. register() throws on a bad spec, and a
-      // flag set up front would latch on the failure — the pane would then be
-      // permanently unregistered, and every later attempt would skip the retry
-      // that might have worked.
-      panes.register({
-        id: PANE_ID,
-        title: 'Camera Director',
-        icon: '🎥',
-        // Resolved when the pane opens, not now — `panel` is a stable node, but
-        // asking for it late is what lets a plugin rebuild or lazily create it.
-        element: () => panel,
-        width: 300,
-        height: 520,
-      });
-      paneRegistered = true;
+      // attachPaneChip() is called from buildPanel(). A throw here would abort the
+      // whole panel build — the pane is a nice-to-have, the panel is the plugin.
+      // So: contain it, and flag only on success, so a later rebuild can retry.
+      try {
+        panes.register({
+          id: PANE_ID,
+          title: 'Camera Director',
+          icon: '🎥',
+          // Resolved when the pane opens, not now — `panel` is a stable node, but
+          // asking for it late is what lets a plugin rebuild or lazily create it.
+          element: () => panel,
+          width: 300,
+          height: 520,
+        });
+        paneRegistered = true;
+      } catch (e) {
+        console.warn('[camera_director] pane registration failed; panel still works', e);
+        return;   // no registration → nothing to attach a chip to
+      }
     }
 
     if (paneChipDetach) { try { paneChipDetach(); } catch (e) { /* already gone */ } paneChipDetach = null; }
@@ -410,7 +414,16 @@
 
   // ── Editable value popover ──────────────────────────────────────────────────
   let _pop = null;
-  function closePop() { if (_pop) { _pop.remove(); _pop = null; } }
+  // Unbind for the popover's outside-click listener. closePop() owns it, so EVERY
+  // way a popover can close — Enter, Escape, the ✓ button, an outside click, or
+  // teardown — takes the listener with it. Leaving it to the outside-click path
+  // alone leaked one listener per popover the user dismissed with the keyboard.
+  let _popDismiss = null;
+
+  function closePop() {
+    if (_popDismiss) { try { _popDismiss(); } catch (e) { /* window may be gone */ } _popDismiss = null; }
+    if (_pop) { _pop.remove(); _pop = null; }
+  }
 
   // ── Follow the panel across documents ───────────────────────────────────────
   //
@@ -436,10 +449,14 @@
   function dismissPopOnOutsideClick() {
     const w = panelWin();
     setTimeout(() => {
+      if (!_pop) return;   // already closed before we could arm
       const onDoc = (e) => {
-        if (_pop && !_pop.contains(e.target)) { closePop(); w.removeEventListener('pointerdown', onDoc, true); }
+        // Self-remove whenever the popover is gone, however it went — not only when
+        // this listener is the one that closed it.
+        if (!_pop || !_pop.contains(e.target)) closePop();
       };
       w.addEventListener('pointerdown', onDoc, true);
+      _popDismiss = () => w.removeEventListener('pointerdown', onDoc, true);
     }, 0);
   }
   function openValueEditor(key) {
