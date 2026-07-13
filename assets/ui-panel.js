@@ -159,7 +159,12 @@
   function attachPaneChip(tools) {
     const panes = window.feedBack && window.feedBack.panes;
     // No panes API (an older host) — no chip, and the panel behaves as it always has.
-    if (!panes || typeof panes.register !== 'function') return;
+    // Feature-detect BOTH, not just register(). A host that offers one without the
+    // other is degenerate, but buildPanel() runs on every mode change — so relying on
+    // the try/catch below to notice would mean throwing and logging on every rebuild,
+    // for the lifetime of the session. A guard says the same thing once, quietly, and
+    // the catch goes back to being for genuine surprises.
+    if (!panes || typeof panes.register !== 'function' || typeof panes.attachChip !== 'function') return;
 
     if (!paneRegistered) {
       // attachPaneChip() is called from buildPanel(). A throw here would abort the
