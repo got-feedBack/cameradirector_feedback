@@ -132,6 +132,67 @@
   const valLabels = {};
 
   // ── Panel build ───────────────────────────────────────────────────────────────
+  // ── Detachable pane ─────────────────────────────────────────────────────────
+  //
+  // Register THIS panel as a pane and it can be popped out into its own window and
+  // left there — across song switches, on a second monitor, minimized to the tray.
+  // No longer an overlay you keep dismissing to see the highway.
+  //
+  // The host MOVES this element into the pane window. Not a copy of it, not a
+  // reimplementation — this node, listeners and closures intact. So everything
+  // comes along: the tabs, the sliders, the preset library, the import/export, the
+  // language toggle, our CSS. It still talks to the brain in the main window, and
+  // the brain still owns the clamps, the store and the bridge globals. Nothing in
+  // this plugin needs to know it moved.
+  //
+  // buildPanel() clears and rebuilds the panel on every 'mode' change, which takes
+  // the chip with it — so re-attach each time. attachChip() allows one live
+  // attachment per pane, hence the detach first; it then reconciles against the
+  // pane's real state, so a panel rebuilt while popped out stays correctly hidden
+  // with its stub in place.
+  // Derived, never re-typed: a drifting pane id would break registration and the
+  // chip while every other use of the id (assets, storage keys) kept working.
+  const PANE_ID = PLUGIN_ID;
+  let paneChipDetach = null;
+  let paneRegistered = false;
+
+  function attachPaneChip(tools) {
+    const panes = window.feedBack && window.feedBack.panes;
+    // No panes API (an older host) — no chip, and the panel behaves as it always has.
+    // Feature-detect BOTH, not just register(). A host that offers one without the
+    // other is degenerate, but buildPanel() runs on every mode change — so relying on
+    // the try/catch below to notice would mean throwing and logging on every rebuild,
+    // for the lifetime of the session. A guard says the same thing once, quietly, and
+    // the catch goes back to being for genuine surprises.
+    if (!panes || typeof panes.register !== 'function' || typeof panes.attachChip !== 'function') return;
+
+    if (!paneRegistered) {
+      // attachPaneChip() is called from buildPanel(). A throw here would abort the
+      // whole panel build — the pane is a nice-to-have, the panel is the plugin.
+      // So: contain it, and flag only on success, so a later rebuild can retry.
+      try {
+        panes.register({
+          id: PANE_ID,
+          title: 'Camera Director',
+          icon: '🎥',
+          // Resolved when the pane opens, not now — `panel` is a stable node, but
+          // asking for it late is what lets a plugin rebuild or lazily create it.
+          element: () => panel,
+          width: 300,
+          height: 520,
+        });
+        paneRegistered = true;
+      } catch (e) {
+        console.warn('[camera_director] pane registration failed; panel still works', e);
+        return;   // no registration → nothing to attach a chip to
+      }
+    }
+
+    if (paneChipDetach) { try { paneChipDetach(); } catch (e) { /* already gone */ } paneChipDetach = null; }
+    try { paneChipDetach = panes.attachChip(panel, PANE_ID, { header: tools }); }
+    catch (e) { console.warn('[camera_director] pop-out chip unavailable', e); }
+  }
+
   function buildPanel() {
     panel.innerHTML = '';
     root.style.setProperty('--cd-accent', API.getColor());
@@ -176,6 +237,15 @@
     tools.append(langBtn, closeBtn);
     head.append(title, tools);
     panel.appendChild(head);
+    // The host's pop-out chip goes in the header's tool cluster. Clicking it moves
+    // the axis controls into their own window and hides this panel, leaving the
+    // host's "bring it back" stub in its place — so the panel stops being an
+    // overlay you have to keep dismissing to see the highway. The host owns the
+    // chip, the hiding and the stub; we only say where the chip lives.
+    // buildPanel() re-runs on every 'mode' change, so this must be idempotent —
+    // attachChip() refuses a second attach for the same pane, and the host's own
+    // open/closed reconciliation re-hides the panel if the pane is already out.
+    attachPaneChip(tools);
 
     // Master switch.
     const masterRow = el('label', 'camdir-master');
@@ -351,7 +421,58 @@
 
   // ── Editable value popover ──────────────────────────────────────────────────
   let _pop = null;
-  function closePop() { if (_pop) { _pop.remove(); _pop = null; } }
+  // Unbind for the popover's outside-click listener. closePop() owns it, so EVERY
+  // way a popover can close — Enter, Escape, the ✓ button, an outside click, or
+  // teardown — takes the listener with it. Leaving it to the outside-click path
+  // alone leaked one listener per popover the user dismissed with the keyboard.
+  let _popDismiss = null;
+
+  function closePop() {
+    if (_popDismiss) { try { _popDismiss(); } catch (e) { /* window may be gone */ } _popDismiss = null; }
+    if (_pop) { _pop.remove(); _pop = null; }
+  }
+
+  // ── Follow the panel across documents ───────────────────────────────────────
+  //
+  // The panel is a detachable pane: the host may have MOVED it into a pop-out
+  // window's document. This code still runs in the main window, so `document` and
+  // `window` here are the MAIN ones — and the panel is no longer in them.
+  //
+  // A popover appended to document.body would therefore open in a window the user
+  // is not even looking at, and a dismiss listener on `window` would never see the
+  // clicks they actually make. Anchor both to whichever document the panel is in.
+  function panelDoc() { return panel.ownerDocument || document; }
+  function panelWin() { return panelDoc().defaultView || window; }
+
+  // The popover was built with the main document's createElement, so it has to be
+  // adopted before it can live in the pane document. adoptNode keeps its listeners.
+  function mountPop(pop) {
+    const d = panelDoc();
+    d.body.appendChild(d === document ? pop : d.adoptNode(pop));
+    _pop = pop;
+  }
+
+  // Dismiss-on-outside-click, in the window the user is actually clicking in.
+  function dismissPopOnOutsideClick() {
+    const w = panelWin();
+    // Capture the popover this call is for. The timer below is deferred a tick, and
+    // in that tick the user can close this popover and open another (click one value,
+    // then another). Without this check the stale timer would arm a listener for the
+    // DEAD popover and overwrite _popDismiss with its own unbind — orphaning the live
+    // popover's listener and leaving the wrong one tracked. Arm only if the popover
+    // we were called for is still the current one.
+    const mine = _pop;
+    setTimeout(() => {
+      if (!_pop || _pop !== mine) return;
+      const onDoc = (e) => {
+        // Self-close whenever the popover is gone, however it went — not only when
+        // this listener is the one that noticed.
+        if (!_pop || !_pop.contains(e.target)) closePop();
+      };
+      w.addEventListener('pointerdown', onDoc, true);
+      _popDismiss = () => w.removeEventListener('pointerdown', onDoc, true);
+    }, 0);
+  }
   function openValueEditor(key) {
     closePop();
     const scale = key === 'yaw' ? 57.2958 : 1;
@@ -370,15 +491,15 @@
     on(input, 'keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') closePop(); });
     on(ok, 'click', commit);
     pop.append(input, unit, ok);
-    document.body.appendChild(pop); _pop = pop;
+    mountPop(pop);
+    // getBoundingClientRect on the label (which is inside the panel) is already
+    // relative to the panel's own window — so once the popover lives in that same
+    // document, these coordinates line up.
     const r = valLabels[key].getBoundingClientRect();
     pop.style.top = (r.bottom + 6) + 'px';
     pop.style.left = Math.max(8, r.right - 140) + 'px';
     input.focus(); input.select();
-    setTimeout(() => {
-      const onDoc = (e) => { if (_pop && !_pop.contains(e.target)) { closePop(); window.removeEventListener('pointerdown', onDoc, true); } };
-      window.addEventListener('pointerdown', onDoc, true);
-    }, 0);
+    dismissPopOnOutsideClick();
   }
 
   // ── Name prompt (Electron has no window.prompt) — anchored under Create ─────
@@ -391,17 +512,14 @@
     on(input, 'keydown', (e) => { if (e.key === 'Enter') done(); if (e.key === 'Escape') closePop(); });
     on(ok, 'click', done);
     pop.append(input, ok);
-    document.body.appendChild(pop); _pop = pop;
+    mountPop(pop);
     const anchor = panel.querySelector('.camdir-create') || panel;
     const r = anchor.getBoundingClientRect();
     pop.style.top = (r.bottom + 8) + 'px';
     pop.style.left = (r.left + r.width / 2) + 'px';
     pop.style.transform = 'translateX(-50%)';
     input.focus();
-    setTimeout(() => {
-      const onDoc = (e) => { if (_pop && !_pop.contains(e.target)) { closePop(); window.removeEventListener('pointerdown', onDoc, true); } };
-      window.addEventListener('pointerdown', onDoc, true);
-    }, 0);
+    dismissPopOnOutsideClick();
   }
 
   // ── Language ────────────────────────────────────────────────────────────────
@@ -519,6 +637,10 @@
         } catch (e) { /* ignore */ }
       }
       closePop();
+      // Detach the chip before the panel goes: it also un-hides the panel and
+      // drops the "popped out" stub, so a re-injected plugin doesn't leave an
+      // orphaned stub pointing at DOM that no longer exists.
+      if (paneChipDetach) { try { paneChipDetach(); } catch (e) { /* ignore */ } paneChipDetach = null; }
       for (const [e2, ev, fn, opts] of L) { try { e2.removeEventListener(ev, fn, opts); } catch (e) { /* ignore */ } }
       L.length = 0;
       launchRow.remove();
