@@ -411,6 +411,37 @@
   // ── Editable value popover ──────────────────────────────────────────────────
   let _pop = null;
   function closePop() { if (_pop) { _pop.remove(); _pop = null; } }
+
+  // ── Follow the panel across documents ───────────────────────────────────────
+  //
+  // The panel is a detachable pane: the host may have MOVED it into a pop-out
+  // window's document. This code still runs in the main window, so `document` and
+  // `window` here are the MAIN ones — and the panel is no longer in them.
+  //
+  // A popover appended to document.body would therefore open in a window the user
+  // is not even looking at, and a dismiss listener on `window` would never see the
+  // clicks they actually make. Anchor both to whichever document the panel is in.
+  function panelDoc() { return panel.ownerDocument || document; }
+  function panelWin() { return panelDoc().defaultView || window; }
+
+  // The popover was built with the main document's createElement, so it has to be
+  // adopted before it can live in the pane document. adoptNode keeps its listeners.
+  function mountPop(pop) {
+    const d = panelDoc();
+    d.body.appendChild(d === document ? pop : d.adoptNode(pop));
+    _pop = pop;
+  }
+
+  // Dismiss-on-outside-click, in the window the user is actually clicking in.
+  function dismissPopOnOutsideClick() {
+    const w = panelWin();
+    setTimeout(() => {
+      const onDoc = (e) => {
+        if (_pop && !_pop.contains(e.target)) { closePop(); w.removeEventListener('pointerdown', onDoc, true); }
+      };
+      w.addEventListener('pointerdown', onDoc, true);
+    }, 0);
+  }
   function openValueEditor(key) {
     closePop();
     const scale = key === 'yaw' ? 57.2958 : 1;
@@ -429,15 +460,15 @@
     on(input, 'keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') closePop(); });
     on(ok, 'click', commit);
     pop.append(input, unit, ok);
-    document.body.appendChild(pop); _pop = pop;
+    mountPop(pop);
+    // getBoundingClientRect on the label (which is inside the panel) is already
+    // relative to the panel's own window — so once the popover lives in that same
+    // document, these coordinates line up.
     const r = valLabels[key].getBoundingClientRect();
     pop.style.top = (r.bottom + 6) + 'px';
     pop.style.left = Math.max(8, r.right - 140) + 'px';
     input.focus(); input.select();
-    setTimeout(() => {
-      const onDoc = (e) => { if (_pop && !_pop.contains(e.target)) { closePop(); window.removeEventListener('pointerdown', onDoc, true); } };
-      window.addEventListener('pointerdown', onDoc, true);
-    }, 0);
+    dismissPopOnOutsideClick();
   }
 
   // ── Name prompt (Electron has no window.prompt) — anchored under Create ─────
@@ -450,17 +481,14 @@
     on(input, 'keydown', (e) => { if (e.key === 'Enter') done(); if (e.key === 'Escape') closePop(); });
     on(ok, 'click', done);
     pop.append(input, ok);
-    document.body.appendChild(pop); _pop = pop;
+    mountPop(pop);
     const anchor = panel.querySelector('.camdir-create') || panel;
     const r = anchor.getBoundingClientRect();
     pop.style.top = (r.bottom + 8) + 'px';
     pop.style.left = (r.left + r.width / 2) + 'px';
     pop.style.transform = 'translateX(-50%)';
     input.focus();
-    setTimeout(() => {
-      const onDoc = (e) => { if (_pop && !_pop.contains(e.target)) { closePop(); window.removeEventListener('pointerdown', onDoc, true); } };
-      window.addEventListener('pointerdown', onDoc, true);
-    }, 0);
+    dismissPopOnOutsideClick();
   }
 
   // ── Language ────────────────────────────────────────────────────────────────
