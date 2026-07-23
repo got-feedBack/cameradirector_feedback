@@ -27,5 +27,7 @@
   "editValue": "Editar valor",
   "dragHint": "Arrastrar = órbita · Shift = paneo · Ctrl = zoom · Alt = altura · Ctrl+Shift = perspectiva · rueda = zoom · ` muestra/oculta",
   "language": "Idioma",
-  "player": "Jugador"
+  "player": "Jugador",
+  "lock": "Bloquear control con ratón",
+  "unlock": "Desbloquear control con ratón"
 }

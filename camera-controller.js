@@ -59,7 +59,7 @@
 
   const PLUGIN_ID = 'camera_director';
   const ASSET_BASE = `/api/plugins/${PLUGIN_ID}/assets`;
-  const VERSION = '3.6.0';
+  const VERSION = '3.7.0';
 
   const LS_STORE = 'camera_director.profiles.v3';  // v3+v4 both live here (see _v); { live, library, assignments, linkAll, active }
   const LS_PROFILES = 'camera_director.profiles.v2';  // legacy per-slot model
@@ -134,7 +134,8 @@
     const ssf = () => window.feedBackSplitscreen || window.slopsmithSplitscreen;
     const clampAll = (c) => Object.assign({}, DEFAULTS, c || {});
     let live = {};   // name -> cam, from the shared store + main's broadcasts
-    function loadLive() { try { const s = JSON.parse(localStorage.getItem(LS_STORE) || 'null'); if (s && s.live) live = s.live; } catch (e) { /* ignore */ } }
+    let mainLock = false;   // main's input lock — gates this window's canvas drags too
+    function loadLive() { try { const s = JSON.parse(localStorage.getItem(LS_STORE) || 'null'); if (s && s.live) { live = s.live; mainLock = !!s.inputLock; } } catch (e) { /* ignore */ } }
     // This follower's panels: the splitscreen API when it has split, else the
     // single popped panel named by the pop-out URL.
     function localPanels() {
@@ -163,7 +164,7 @@
         ch = new BroadcastChannel(CH_NAME);
         ch.addEventListener('message', (ev) => {
           const m = ev.data || {};
-          if (m.type === 'camdir' && m.cams) { for (const n in m.cams) live[n] = m.cams[n]; applyAll(); }
+          if (m.type === 'camdir' && m.cams) { for (const n in m.cams) live[n] = m.cams[n]; mainLock = !!m.lock; applyAll(); }
           else if (m.type === 'camdir-who') announce();   // main soliciting panel lists
         });
         try { ch.postMessage({ type: 'camdir-hello' }); } catch (e) { /* nudge main to send cams */ }
@@ -171,7 +172,7 @@
       }
     } catch (e) { /* ignore */ }
     // Cross-window persistence (storage fires in OTHER windows).
-    const onStorage = (e) => { if (e.key !== LS_STORE || !e.newValue) return; try { const s = JSON.parse(e.newValue); if (s && s.live) { live = s.live; applyAll(); } } catch (err) { /* ignore */ } };
+    const onStorage = (e) => { if (e.key !== LS_STORE || !e.newValue) return; try { const s = JSON.parse(e.newValue); if (s && s.live) { live = s.live; mainLock = !!s.inputLock; applyAll(); } } catch (err) { /* ignore */ } };
     window.addEventListener('storage', onStorage);
     // Re-apply + heartbeat-announce (main prunes stale follower entries); the
     // follower's own layout can change (it may split), so re-announce on change.
@@ -212,13 +213,14 @@
     const fL = [];
     const fAdd = (el, ev, fn, opts) => { el.addEventListener(ev, fn, opts); fL.push([el, ev, fn, opts]); };
     fAdd(window, 'pointerdown', (e) => {
-      if (fOverUI(e) || !fIsCanvas(e.target)) return;
+      if (mainLock || fOverUI(e) || !fIsCanvas(e.target)) return;
       const p = panelForPoint(e.clientX, e.clientY); if (!p) return;
       const cam = live[p.name]; if (!cam || !cam.enabled) return;   // free-cam must be armed (from main)
       fdrag = { name: p.name, x: e.clientX, y: e.clientY };
     });
     fAdd(window, 'pointermove', (e) => {
       if (!fdrag) return;
+      if (mainLock) { fdrag = null; return; }   // lock landed mid-drag
       const b = Object.assign({}, DEFAULTS, live[fdrag.name]);   // work on a copy
       const dx = e.clientX - fdrag.x, dy = e.clientY - fdrag.y; fdrag.x = e.clientX; fdrag.y = e.clientY;
       if (e.shiftKey) {
@@ -236,7 +238,7 @@
     });
     fAdd(window, 'pointerup', () => { if (fdrag) { sendEdit(fdrag.name, live[fdrag.name], true); fdrag = null; } });
     fAdd(window, 'wheel', (e) => {
-      if (fOverUI(e) || !fIsCanvas(e.target)) return;
+      if (mainLock || fOverUI(e) || !fIsCanvas(e.target)) return;
       const p = panelForPoint(e.clientX, e.clientY); if (!p) return;
       const cam = live[p.name]; if (!cam || !cam.enabled) return;
       e.preventDefault();
@@ -265,13 +267,14 @@
   //    by index (_legacyLive/_legacyAssign) and adopted the first time a panel
   //    appears at that index, so existing per-panel cameras survive the rename.
   function loadStore() {
-    const out = { active: null, live: {}, library: [], assignments: {}, linkAll: false, _v: 4, _legacyLive: [], _legacyAssign: [] };
+    const out = { active: null, live: {}, library: [], assignments: {}, linkAll: false, inputLock: false, _v: 4, _legacyLive: [], _legacyAssign: [] };
     let s = null;
     try { s = JSON.parse(localStorage.getItem(LS_STORE) || 'null'); } catch (e) { /* corrupt */ }
     // v4 (name-keyed) — load as-is.
     if (s && s._v === 4 && s.live && Array.isArray(s.library)) {
       out.active = (typeof s.active === 'string') ? s.active : null;
       out.linkAll = !!s.linkAll;
+      out.inputLock = !!s.inputLock;
       for (const n in s.live) out.live[n] = Object.assign({}, DEFAULTS, s.live[n]);
       out.assignments = {}; for (const n in (s.assignments || {})) out.assignments[n] = s.assignments[n] || null;
       out.library = s.library.filter((p) => p && p.name && p.cam)
@@ -321,6 +324,7 @@
       localStorage.setItem(LS_STORE, JSON.stringify({
         _v: 4, active: profiles.active, live: profiles.live,
         library: profiles.library, assignments: profiles.assignments, linkAll: profiles.linkAll,
+        inputLock: profiles.inputLock,
       }));
     } catch (e) { /* quota */ }
   }
@@ -446,6 +450,10 @@
             remotePanels.set(m.windowId, { names: next, ts: _nowMs() });
             if (changed) { emit('mode'); broadcastCams(); }
           } else if (m.type === 'camdir-edit' && m.name && m.cam) {
+            // Input lock also rejects follower drags: the follower's local
+            // wiggle (instant feedback) is snapped back by the next `camdir`
+            // broadcast, which carries the authoritative store state.
+            if (inputLock) { broadcastSoon(); return; }
             // A follower dragged its own panel's camera and forwarded the result.
             // Main is the sole store-writer: clamp, persist, rebroadcast so every
             // window (and the main UI, if it's the edited panel) converges.
@@ -472,7 +480,7 @@
     for (const p of getPanelList()) profiles.live[p.name] = stripLive(ensureBridge(p.name, p.index)); // refresh this window's panels
     const cams = {};
     for (const n in profiles.live) cams[n] = stripLive(profiles.live[n]);
-    try { ch.postMessage({ type: 'camdir', cams }); } catch (e) { /* ignore */ }
+    try { ch.postMessage({ type: 'camdir', cams, lock: inputLock }); } catch (e) { /* ignore */ }
   }
   let _bcT = 0;
   function broadcastSoon() { if (_bcT) return; _bcT = setTimeout(() => { _bcT = 0; broadcastCams(); }, 60); }
@@ -480,6 +488,15 @@
   // ── Editing panel (which panel's controls the UI is showing) ─────────────────
   let editingName = (typeof profiles.active === 'string' && profiles.active) || SINGLE_NAME;
   function editBridge() { return ensureBridge(editingName, indexForName(editingName)); }
+
+  // ── Input lock: freeze the authored view against errant canvas drags/wheel ──
+  // With free-cam armed, the Blender-style canvas nav below is otherwise live
+  // forever — any stray drag over the highway re-aims the camera. The lock
+  // disables ONLY pointer editing (canvas drag/wheel, here and in follower
+  // windows via the `lock` field on `camdir` broadcasts, plus incoming
+  // `camdir-edit`); panel sliders/presets keep working — opening the panel is
+  // deliberate in a way a drag on the game surface is not. Persisted (v4 store).
+  let inputLock = !!profiles.inputLock;
 
   // ── Link-all: one camera shared across every panel ──────────────────────────
   let linkAll = !!profiles.linkAll;
@@ -611,7 +628,7 @@
   const isCanvas = (t) => t && (t.id === 'highway' || t.tagName === 'CANVAS');
   let drag = null;
   addL(window, 'pointerdown', (e) => {
-    if (overUI(e) || !isCanvas(e.target)) return;
+    if (inputLock || overUI(e) || !isCanvas(e.target)) return;
     const name = nameForPoint(e.clientX, e.clientY);
     if (!name || !ensureBridge(name, indexForName(name)).enabled) return;
     drag = { name, x: e.clientX, y: e.clientY };
@@ -636,7 +653,7 @@
   });
   addL(window, 'pointerup', () => { if (drag) { persistName(drag.name); drag = null; } });
   addL(window, 'wheel', (e) => {
-    if (overUI(e) || !isCanvas(e.target)) return;
+    if (inputLock || overUI(e) || !isCanvas(e.target)) return;
     const name = nameForPoint(e.clientX, e.clientY);
     if (!name || !ensureBridge(name, indexForName(name)).enabled) return;
     e.preventDefault();
@@ -716,6 +733,18 @@
     getAssignment: (name) => profiles.assignments[name || editingName] || null,
     isEnabled: () => !!editBridge().enabled,
     setEnabled(b) { editBridge().enabled = !!b; syncLink(editingName); writeBridge(); emit('change', editingName); persistName(editingName); },
+    // Input lock (canvas drag/wheel only — sliders/presets stay live).
+    isInputLocked: () => inputLock,
+    setInputLocked(b) {
+      inputLock = !!b; profiles.inputLock = inputLock;
+      // An in-flight drag's edits exist only in the bridge until pointerup's
+      // persistName() — flush them into profiles.live BEFORE the immediate
+      // save below, or the frozen view on disk is older than the one on screen.
+      if (drag) { persistName(drag.name); drag = null; }
+      saveProfiles();                  // immediate — a lock the user set should survive a crash
+      broadcastSoon();                 // followers gate their own drags on it
+      emit('mode');
+    },
     // Link-all + bulk ops (splitscreen "across the board").
     isLinkAll: () => linkAll,
     setLinkAll(b) { linkAll = !!b; profiles.linkAll = linkAll; saveSoon(); if (linkAll) syncLink(editingName); writeBridge(); emit('mode'); },
