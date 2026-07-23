@@ -232,6 +232,12 @@
 
 /* Slider rows — neutral dark track + metal knob --------------------------- */
 .camdir-grid { display: flex; flex-direction: column; gap: 9px; }
+/* Disarmed ("Free camera" off): the renderer ignores the bridge, so the axis
+   controls would edit an invisible camera. Dim the grid and make it inert
+   (pointer-events for mouse/touch; the matching `disabled` set in JS covers
+   keyboard). Gated buttons (Reset) dim through :disabled the same way. */
+.camdir-panel:not(.camdir-armed) .camdir-grid { opacity: 0.45; pointer-events: none; }
+.camdir-panel .camdir-gated:disabled { opacity: 0.45; cursor: not-allowed; }
 .camdir-row { display: flex; flex-direction: column; gap: 4px; }
 .camdir-label { display: flex; align-items: center; gap: 6px; color: var(--cd-text-dim); }
 .camdir-label > span:first-of-type { color: var(--cd-text); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65); }
@@ -370,3 +376,5 @@
   letter-spacing: 0.12em; text-transform: uppercase; text-align: center;
 }
 .camdir-reset-link:hover { color: #fff; text-decoration: underline; }
+/* :hover still matches disabled buttons — don't let Reset light up while gated. */
+.camdir-reset-link:disabled:hover { color: var(--cd-text-dim); text-decoration: none; }

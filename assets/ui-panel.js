@@ -398,7 +398,7 @@
     const hint = el('div', 'camdir-hint'); hint.textContent = t('dragHint');
     panel.appendChild(hint);
 
-    const resetLink = el('button', 'camdir-reset-link'); resetLink.textContent = t('reset');
+    const resetLink = el('button', 'camdir-reset-link camdir-gated'); resetLink.textContent = t('reset');
     on(resetLink, 'click', () => API.resetCamera());
     panel.appendChild(resetLink);
 
@@ -412,6 +412,13 @@
     const row = panel.querySelector('.camdir-master');
     if (row) row.classList.toggle('is-on', enabled);
     if (panel._masterState) panel._masterState.textContent = enabled ? t('on') : t('off');
+    // Disarmed → the axis controls edit a camera the renderer isn't reading.
+    // Grey them out and make them inert (the .camdir-armed CSS dims the grid;
+    // `disabled` covers keyboard input, which pointer-events can't). Presets
+    // and the profile picker stay live — authoring the library while disarmed
+    // is a legit workflow; the sliders pretending to work was the complaint.
+    for (const [key] of AXES) if (sliders[key]) sliders[key].disabled = !enabled;
+    panel.querySelectorAll('.camdir-gated').forEach((b) => { b.disabled = !enabled; });
   }
 
   function syncSliders() {
