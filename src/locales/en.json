@@ -27,5 +27,7 @@
   "editValue": "Edit value",
   "dragHint": "Drag = orbit · Shift = pan · Ctrl = zoom · Alt = height · Ctrl+Shift = perspective · wheel = zoom · ` toggles",
   "language": "Language",
-  "player": "Player"
+  "player": "Player",
+  "lock": "Lock mouse control",
+  "unlock": "Unlock mouse control"
 }

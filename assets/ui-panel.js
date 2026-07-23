@@ -58,6 +58,7 @@
       importErr: 'Invalid camera file.', editValue: 'Edit value',
       dragHint: 'Drag = orbit · Shift = pan · Ctrl = zoom · Alt = height · wheel = zoom · ` toggles',
       language: 'Language', player: 'Player',
+      lock: 'Lock mouse control', unlock: 'Unlock mouse control',
     },
     es: {
       title: 'Director de Cámara', launch: 'Cámara', open: 'Abrir', master: 'Cámara libre', on: 'SÍ', off: 'NO',
@@ -69,6 +70,7 @@
       importErr: 'Archivo de cámara inválido.', editValue: 'Editar valor',
       dragHint: 'Arrastrar = órbita · Shift = paneo · Ctrl = zoom · Alt = altura · rueda = zoom · ` muestra/oculta',
       language: 'Idioma', player: 'Jugador',
+      lock: 'Bloquear control con ratón', unlock: 'Desbloquear control con ratón',
     },
   };
   const i18n = JSON.parse(JSON.stringify(FALLBACK_I18N));
@@ -93,6 +95,8 @@
     panX: '<path d="M2 12h20M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
     panY: '<path d="M12 2v20M8 6l4-4 4 4M8 18l4 4 4-4"/>',
     close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    unlock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.8-1.3"/>',
     camera: '<path d="M3 7h4l2-2h6l2 2h4v12H3zM12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/>',
     save: '<path d="M5 3h11l3 3v15H5zM8 3v6h7V3M8 21v-7h8v7"/>',
     import: '<path d="M12 3v12M8 11l4 4 4-4M4 21h16"/>',
@@ -261,11 +265,23 @@
     const title = el('div', 'camdir-title');
     title.innerHTML = svg('camera', 18) + `<span>${t('title')}</span>`;
     const tools = el('div', 'camdir-tools');
+    // Input lock: freezes canvas drag/wheel (here and in follower windows) so an
+    // errant mouse can't re-aim a dialed-in view; sliders/presets stay live.
+    // buildPanel() re-runs on 'mode' — which setInputLocked emits — so the
+    // pressed state re-renders itself.
+    const locked = !!(API.isInputLocked && API.isInputLocked());
+    const lockBtn = el('button', 'camdir-icon-btn');
+    lockBtn.innerHTML = svg(locked ? 'lock' : 'unlock', 16);
+    lockBtn.title = locked ? t('unlock') : t('lock');
+    lockBtn.setAttribute('aria-label', lockBtn.title);
+    lockBtn.setAttribute('aria-pressed', String(locked));
+    if (locked) lockBtn.style.color = '#4fd584';
+    if (API.setInputLocked) on(lockBtn, 'click', () => API.setInputLocked(!API.isInputLocked()));
     const langBtn = el('button', 'camdir-lang'); langBtn.textContent = lang.toUpperCase(); langBtn.title = t('language');
     on(langBtn, 'click', () => setLang(lang === 'en' ? 'es' : 'en'));
     const closeBtn = el('button', 'camdir-icon-btn'); closeBtn.innerHTML = svg('close', 16); closeBtn.title = t('close');
     on(closeBtn, 'click', togglePanel);
-    tools.append(langBtn, closeBtn);
+    tools.append(lockBtn, langBtn, closeBtn);
     head.append(title, tools);
     panel.appendChild(head);
     // The host's pop-out chip goes in the header's tool cluster. Clicking it moves

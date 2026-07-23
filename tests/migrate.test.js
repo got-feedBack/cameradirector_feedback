@@ -24,8 +24,10 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'camera-controller.js'), 
 
 // Build a sandbox with a seeded localStorage and run the brain in it. Returns
 // window.__camDir. `store` maps LS key → already-JSON-stringified value.
-function loadPlugin(store = {}) {
+// Pass `out` to get `out.ls` — the live backing Map — for write-back assertions.
+function loadPlugin(store = {}, out = {}) {
   const ls = new Map(Object.entries(store));
+  out.ls = ls;
   const noopEl = () => ({ dataset: {}, style: {}, set src(v) {}, appendChild() {}, remove() {}, click() {}, setAttribute() {} });
   const win = {};
   const sandbox = {
@@ -128,4 +130,21 @@ test('migrated library cameras are clamped to axis ranges', () => {
   });
   const cam = api.listPresets()[0].cam;
   assert.ok(cam.yaw <= 1.2 && cam.heightMul <= 3, 'out-of-range profile cam clamped');
+});
+
+test('input lock: default off, restored from v4 store, persisted on set', () => {
+  const api = loadPlugin({
+    'camera_director.profiles.v3': JSON.stringify({ _v: 4, live: {}, library: [], assignments: {}, inputLock: true }),
+  });
+  assert.equal(api.isInputLocked(), true, 'lock restored from store');
+
+  const out = {};
+  const api2 = loadPlugin({}, out);
+  assert.equal(api2.isInputLocked(), false, 'default is unlocked');
+  api2.setInputLocked(true);
+  assert.equal(api2.isInputLocked(), true);
+  // setInputLocked saves immediately (not via the debounced saveSoon, whose
+  // timer the stubbed setTimeout never fires).
+  const saved = JSON.parse(out.ls.get('camera_director.profiles.v3'));
+  assert.equal(saved.inputLock, true, 'lock persisted immediately');
 });
