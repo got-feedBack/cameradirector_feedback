@@ -34,8 +34,16 @@
   // the player rail (and the Visualisation popover our launcher row lives in),
   // and the main-window highway canvas sits hidden behind the follower wrap.
   // See mountLauncher / refreshLaunchVisibility / onHighwayVisibility.
+  // Mirrors splitscreen's normalizeRoomKey (6 chars from its unambiguous
+  // alphabet): splitscreen only enters remote-follower mode for a key that
+  // passes that check, and an invalid/empty `?ss=` boots the NORMAL app with
+  // the rail visible — where the chip must not appear and the row path is the
+  // right one.
   const REMOTE_VIEWER = (() => {
-    try { return !!new URLSearchParams(location.search).get('ss'); } catch (e) { return false; }
+    try {
+      const raw = new URLSearchParams(location.search).get('ss') || '';
+      return /^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/.test(raw.trim().toUpperCase());
+    } catch (e) { return false; }
   })();
 
   // ── i18n ────────────────────────────────────────────────────────────────────
@@ -136,6 +144,9 @@
   remoteChip.type = 'button';
   remoteChip.innerHTML = svg('camera', 20);
   remoteChip.title = t('title');
+  // Icon-only button: the SVG is aria-hidden and `title` alone is not a
+  // dependable accessible name, so label it explicitly.
+  remoteChip.setAttribute('aria-label', t('title'));
 
   const importPicker = el('input');
   importPicker.type = 'file'; importPicker.accept = 'application/json,.json'; importPicker.style.display = 'none';
@@ -663,6 +674,7 @@
     launchBtn.querySelector('span').textContent = panel.hidden ? t('open') : t('close');
     launchBtn.title = t('title');
     remoteChip.title = t('title');
+    remoteChip.setAttribute('aria-label', t('title'));
   });
 
   // ── Teardown handle (called by the brain on re-injection) ───────────────────
