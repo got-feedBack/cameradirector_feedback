@@ -737,7 +737,10 @@
     isInputLocked: () => inputLock,
     setInputLocked(b) {
       inputLock = !!b; profiles.inputLock = inputLock;
-      drag = null;                     // don't let an in-flight drag keep editing
+      // An in-flight drag's edits exist only in the bridge until pointerup's
+      // persistName() — flush them into profiles.live BEFORE the immediate
+      // save below, or the frozen view on disk is older than the one on screen.
+      if (drag) { persistName(drag.name); drag = null; }
       saveProfiles();                  // immediate — a lock the user set should survive a crash
       broadcastSoon();                 // followers gate their own drags on it
       emit('mode');
