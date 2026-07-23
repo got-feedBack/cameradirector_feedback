@@ -27,6 +27,25 @@
   const LS_LANG = 'camera_director.lang';
   const AXES = API.AXES;
 
+  // LAN-share viewer (splitscreen's `?ss=<roomkey>` remote follower). The whole
+  // app boots on the CONNECTING device, so the full brain runs here with its own
+  // store and bridge globals — camera edits are local to that browser by
+  // construction. Only the entry points differ: splitscreen's follower CSS hides
+  // the player rail (and the Visualisation popover our launcher row lives in),
+  // and the main-window highway canvas sits hidden behind the follower wrap.
+  // See mountLauncher / refreshLaunchVisibility / onHighwayVisibility.
+  // Mirrors splitscreen's normalizeRoomKey (6 chars from its unambiguous
+  // alphabet): splitscreen only enters remote-follower mode for a key that
+  // passes that check, and an invalid/empty `?ss=` boots the NORMAL app with
+  // the rail visible — where the chip must not appear and the row path is the
+  // right one.
+  const REMOTE_VIEWER = (() => {
+    try {
+      const raw = new URLSearchParams(location.search).get('ss') || '';
+      return /^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/.test(raw.trim().toUpperCase());
+    } catch (e) { return false; }
+  })();
+
   // ── i18n ────────────────────────────────────────────────────────────────────
   const FALLBACK_I18N = {
     en: {
@@ -116,6 +135,18 @@
   launchBtn.innerHTML = svg('camera', 14) + `<span>${t('open')}</span>`;
   launchBtn.title = t('title');
   launchRow.append(launchLabel, launchBtn);
+
+  // Floating launcher for the LAN-share viewer, where the rail row above is
+  // unreachable. Child of #camdir-root so it inherits the accent/skin vars;
+  // .camdir-chip is fixed at z-index 99998, above splitscreen's follower wrap.
+  const remoteChip = el('button', 'camdir-chip');
+  remoteChip.id = 'camdir-remote-chip';
+  remoteChip.type = 'button';
+  remoteChip.innerHTML = svg('camera', 20);
+  remoteChip.title = t('title');
+  // Icon-only button: the SVG is aria-hidden and `title` alone is not a
+  // dependable accessible name, so label it explicitly.
+  remoteChip.setAttribute('aria-label', t('title'));
 
   const importPicker = el('input');
   importPicker.type = 'file'; importPicker.accept = 'application/json,.json'; importPicker.style.display = 'none';
@@ -562,12 +593,25 @@
     return v === 'auto' || !!VIZ_3D[v];
   }
   function refreshLaunchVisibility() {
+    // Remote viewer: the chip is unconditional. #viz-picker belongs to the
+    // hidden main rail and doesn't reflect the follower panel's mode, so its
+    // 3D/2D verdict is meaningless here — and acting on it would close the
+    // panel out from under the viewer on every viz:renderer:ready.
+    if (REMOTE_VIEWER) return;
     const show = is3DHighway();
     launchRow.style.display = show ? 'flex' : 'none';
     if (!show && !panel.hidden) togglePanel(); // close if the highway went 2D
   }
   let _mountTries = 0;
   function mountLauncher() {
+    // LAN-share viewer: the rail popover exists in the DOM but splitscreen's
+    // follower CSS display:nones it, so a row in there can never be opened.
+    // Float the chip instead; the ` hotkey keeps working, the chip is the
+    // touch-friendly way in.
+    if (REMOTE_VIEWER) {
+      if (!remoteChip.isConnected) root.appendChild(remoteChip);
+      return;
+    }
     if (launchRow.isConnected) { refreshLaunchVisibility(); return; }
     const pop = document.getElementById('v3-rail-pop-viz');
     const picker = document.getElementById('viz-picker');
@@ -594,9 +638,14 @@
   // the highway view was actually navigated away from — not a mere tab switch —
   // and the panel shouldn't linger floating over the library / other screens.
   function onHighwayVisibility(ev) {
+    // Remote viewer: core tracks the MAIN highway canvas, which is hidden
+    // behind the follower wrap — visible:false there says nothing about the
+    // follower panels, and closing on it would fight the viewer.
+    if (REMOTE_VIEWER) return;
     if (ev && ev.visible === false && !panel.hidden) togglePanel();
   }
   on(launchBtn, 'click', togglePanel);
+  on(remoteChip, 'click', togglePanel);
   const _vizSel = document.getElementById('viz-picker');
   if (_vizSel) on(_vizSel, 'change', refreshLaunchVisibility);
   if (window.feedBack && typeof window.feedBack.on === 'function') {
@@ -624,6 +673,8 @@
     launchLabel.textContent = t('launch');
     launchBtn.querySelector('span').textContent = panel.hidden ? t('open') : t('close');
     launchBtn.title = t('title');
+    remoteChip.title = t('title');
+    remoteChip.setAttribute('aria-label', t('title'));
   });
 
   // ── Teardown handle (called by the brain on re-injection) ───────────────────
