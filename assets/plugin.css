@@ -376,3 +376,5 @@
   letter-spacing: 0.12em; text-transform: uppercase; text-align: center;
 }
 .camdir-reset-link:hover { color: #fff; text-decoration: underline; }
+/* :hover still matches disabled buttons — don't let Reset light up while gated. */
+.camdir-reset-link:disabled:hover { color: var(--cd-text-dim); text-decoration: none; }
