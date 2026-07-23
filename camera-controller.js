@@ -59,7 +59,7 @@
 
   const PLUGIN_ID = 'camera_director';
   const ASSET_BASE = `/api/plugins/${PLUGIN_ID}/assets`;
-  const VERSION = '3.5.0';
+  const VERSION = '3.6.0';
 
   const LS_STORE = 'camera_director.profiles.v3';  // v3+v4 both live here (see _v); { live, library, assignments, linkAll, active }
   const LS_PROFILES = 'camera_director.profiles.v2';  // legacy per-slot model
