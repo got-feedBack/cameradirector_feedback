@@ -8,13 +8,13 @@ inside your Slopsmith plugins directory:
 
 | System   | Plugins directory |
 |----------|-------------------|
-| Windows  | `%APPDATA%\slopsmith-desktop\plugins\` |
-| macOS    | `~/Library/Application Support/slopsmith-desktop/plugins/` |
-| Linux    | `~/.config/slopsmith-desktop/plugins/` |
+| Windows  | `%APPDATA%\feedback-desktop\plugins\` |
+| macOS    | `~/Library/Application Support/feedback-desktop/plugins/` |
+| Linux    | `~/.config/feedback-desktop/plugins/` |
 
 ```powershell
 # Windows (PowerShell)
-git clone https://github.com/nimuart/cameradirector_feedback "$env:APPDATA\slopsmith-desktop\plugins\camera_director"
+git clone https://github.com/nimuart/cameradirector_feedback "$env:APPDATA\feedback-desktop\plugins\camera_director"
 ```
 
 > Important: what must end up directly inside `plugins/camera_director/` is the

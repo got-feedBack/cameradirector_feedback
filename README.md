@@ -1,4 +1,4 @@
-# 🎥 Camera Director — Slopsmith plugin · **v3.4**
+# 🎥 Camera Director — Slopsmith plugin · **v3.7.1**
 
 https://github.com/user-attachments/assets/d0ffaa9d-f47f-46da-9c6d-ea3b9ac7a6db
 
@@ -12,14 +12,17 @@ another monitor) right from the main window.
 
 ## Install
 
-1. Copy this folder into your Slopsmith plugins directory:
-   - Windows: `%APPDATA%\slopsmith-desktop\plugins\camera_director`
-   - macOS: `~/Library/Application Support/slopsmith-desktop/plugins/camera_director`
-   - Linux: `~/.config/slopsmith-desktop/plugins/camera_director`
-2. **The bridge (Slopsmith 0.2.x):** the camera won't move until you apply the
-   bridge — run `bridge/install_modded_screen.bat` (Windows, with the app
-   closed). **From Slopsmith 0.3 this step won't be needed** (the bridge ships
-   built in); meanwhile it's required.
+1. Copy this folder into the desktop app's plugins directory:
+   - Windows: `%APPDATA%\feedback-desktop\plugins\camera_director`
+   - macOS: `~/Library/Application Support/feedback-desktop/plugins/camera_director`
+   - Linux: `~/.config/feedback-desktop/plugins/camera_director`
+
+   Older builds used another folder name (such as `slopsmith-desktop`). The
+   app copies it to `feedback-desktop` on first launch.
+2. **The bridge (only Slopsmith Desktop 0.2.9 and earlier):** on those versions
+   the camera won't move until you apply the bridge. Run
+   `bridge/install_modded_screen.bat` (Windows, with the app closed). Newer
+   versions ship the bridge built in, so skip this step.
 3. Restart Slopsmith, open a song with the **3D Highway**, and click the 🎥 chip
    (or press `` ` ``).
 
