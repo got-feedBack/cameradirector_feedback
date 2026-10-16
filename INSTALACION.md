@@ -8,13 +8,13 @@ tu carpeta de plugins de Slopsmith:
 
 | Sistema  | Carpeta de plugins |
 |----------|--------------------|
-| Windows  | `%APPDATA%\slopsmith-desktop\plugins\` |
-| macOS    | `~/Library/Application Support/slopsmith-desktop/plugins/` |
-| Linux    | `~/.config/slopsmith-desktop/plugins/` |
+| Windows  | `%APPDATA%\feedback-desktop\plugins\` |
+| macOS    | `~/Library/Application Support/feedback-desktop/plugins/` |
+| Linux    | `~/.config/feedback-desktop/plugins/` |
 
 ```powershell
 # Windows (PowerShell)
-git clone https://github.com/nimuart/cameradirector_feedback "$env:APPDATA\slopsmith-desktop\plugins\camera_director"
+git clone https://github.com/nimuart/cameradirector_feedback "$env:APPDATA\feedback-desktop\plugins\camera_director"
 ```
 
 > Importante: lo que tiene que quedar adentro de `plugins/camera_director/` es el

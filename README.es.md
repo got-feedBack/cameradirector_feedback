@@ -1,4 +1,4 @@
-# 🎥 Camera Director — plugin para Slopsmith · **v3.4**
+# 🎥 Camera Director — plugin para Slopsmith · **v3.7.1**
 
 > 🇪🇸 Español · [🇬🇧 English](./README.md)
 
@@ -12,14 +12,18 @@ los paneles **desprendidos** (en otro monitor) desde la ventana principal.
 
 ## Instalación
 
-1. Copiá esta carpeta en la carpeta de plugins de Slopsmith:
-   - Windows: `%APPDATA%\slopsmith-desktop\plugins\camera_director`
-   - macOS: `~/Library/Application Support/slopsmith-desktop/plugins/camera_director`
-   - Linux: `~/.config/slopsmith-desktop/plugins/camera_director`
-2. **El puente (Slopsmith 0.2.x):** la cámara no se mueve hasta aplicar el
-   puente — corré `bridge/install_modded_screen.bat` (Windows, con la app
-   cerrada). **A partir de Slopsmith 0.3 este paso no hará falta** (el puente
-   viene incluido); por ahora es obligatorio.
+1. Copiá esta carpeta en la carpeta de plugins de la app de escritorio:
+   - Windows: `%APPDATA%\feedback-desktop\plugins\camera_director`
+   - macOS: `~/Library/Application Support/feedback-desktop/plugins/camera_director`
+   - Linux: `~/.config/feedback-desktop/plugins/camera_director`
+
+   Las versiones anteriores usaban otro nombre de carpeta (por ejemplo
+   `slopsmith-desktop`). La app la copia a `feedback-desktop` la primera vez
+   que arranca.
+2. **El puente (solo Slopsmith Desktop 0.2.9 y anteriores):** en esas versiones
+   la cámara no se mueve hasta aplicar el puente. Corré
+   `bridge/install_modded_screen.bat` (Windows, con la app cerrada). Las
+   versiones nuevas ya traen el puente incluido, así que salteá este paso.
 3. Reiniciá Slopsmith, abrí una canción con el **3D Highway** y tocá el chip 🎥
    (o apretá `` ` ``).
 
